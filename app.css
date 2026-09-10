@@ -119,3 +119,4 @@ tr.th td{font-size:9.5px;letter-spacing:.07em;text-transform:uppercase;color:var
 .dir{font-size:var(--s2);width:150px}
 .dir.up{color:var(--act)} .dir.down{color:var(--mute)}
 @media(max-width:560px){ .vor{width:48px;font-size:var(--s1)} .gp,.dir{font-size:var(--s1);width:auto} }
+.gapn{color:var(--dim);font-variant-numeric:tabular-nums}

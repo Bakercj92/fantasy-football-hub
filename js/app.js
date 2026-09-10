@@ -106,7 +106,7 @@ function attachMarket() {
   for (const L of Object.values(state.leagues)) {
     for (const p of L.roster) p.market = state.market.byId.get(p.id) || null;
     for (const p of L.byId.values()) p.market = state.market.byId.get(p.id) || null;
-    L.disagreements = disagreements(L.roster, state.market);
+    L.disagreements = disagreements(L.roster, state.market, L.priced);
   }
 }
 

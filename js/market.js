@@ -101,37 +101,60 @@ export async function consensus() {
 
 // Where our ranking and the market's disagree.
 //
-// Two corrections that matter more than they look:
+// This was wrong on the first pass and the live site showed it: the top
+// "disagreement" was Cameron Dicker, kicker, "ours #14, theirs #1".
 //
-// 1. Our side ranks by VOR, not by raw projected points. Within one roster
-//    the comparison is cross-position - a quarterback against a wide
-//    receiver - and raw points make every quarterback look like a stud.
-//    Consensus ECR is already a cross-position number, so VOR is the only
-//    like-for-like currency to put beside it.
+// FantasyPros publishes ECR on PER-POSITION pages. A kicker ranked 1 and a
+// receiver ranked 4 are not on one scale - there are ~32 ranked kickers and
+// ~150 ranked receivers. Sorting a mixed roster by raw `ecr` therefore
+// floats every kicker and defense to the top and says nothing at all.
 //
-// 2. The gap that counts as a disagreement scales with roster size. A gap
-//    of 8 ranks is enormous inside a 16-player roster and unremarkable
-//    inside a national top-200. Fixed thresholds imported from national
-//    rankings are how a tool ends up either silent or screaming.
-const ourValue = (p) => (typeof p.vor === "number" ? p.vor : p.pts);
+// So the comparison is done WITHIN a position, which is the only place both
+// sides mean the same thing: their `pos_rank` ("RB24") against our rank for
+// the same player among every player we priced at that position. And the
+// gate scales with how many players the market ranks at that position - a
+// gap of 8 is a real disagreement at tight end and a rounding error at
+// receiver.
+//
+// Kickers and defenses are excluded outright. They are streaming slots whose
+// week-to-week ranking is close to noise, and including them buries the
+// positions where a disagreement would actually change a decision.
+const RANKED_POSITIONS = new Set(["QB", "RB", "WR", "TE"]);
+const posRankNumber = (posRank) => {
+  const m = /(\d+)\s*$/.exec(String(posRank || ""));
+  return m ? parseInt(m[1], 10) : null;
+};
 
-export function disagreements(roster, market, minGap = null) {
-  const ours = roster
-    .filter((p) => typeof ourValue(p) === "number" && market.byId.has(p.id))
-    .sort((a, b) => ourValue(b) - ourValue(a))
-    .map((p, i) => ({ ...p, ourRank: i + 1 }));
+export function disagreements(roster, market, priced) {
+  if (!market?.ok || !priced) return [];
 
-  if (ours.length < 4) return [];
-  const gate = minGap ?? Math.max(3, Math.ceil(ours.length / 5));
+  // Our ranking of every player at each position, from the whole priced
+  // universe - not just the roster, so "we have him as RB12" means RB12
+  // in football, the same thing their RB24 means.
+  const ourRankAt = new Map();
+  const poolAt = new Map();
+  for (const pos of RANKED_POSITIONS) {
+    const ranked = [...priced.values()]
+      .filter((p) => p.pos === pos && typeof p.pts === "number" && p.startable !== false)
+      .sort((a, b) => b.pts - a.pts);
+    ranked.forEach((p, i) => ourRankAt.set(p.id, i + 1));
+    poolAt.set(pos, [...market.byId.values()]
+      .filter((m) => posRankNumber(m.posRank) !== null && new RegExp("^" + pos, "i").test(m.posRank || ""))
+      .length);
+  }
 
-  const rankOf = new Map(
-    [...ours]
-      .sort((a, b) => (market.byId.get(a.id).ecr ?? 1e9) - (market.byId.get(b.id).ecr ?? 1e9))
-      .map((p, i) => [p.id, i + 1])
-  );
-
-  return ours
-    .map((p) => ({ ...p, theirRank: rankOf.get(p.id), gap: rankOf.get(p.id) - p.ourRank }))
-    .filter((p) => Math.abs(p.gap) >= gate)
-    .sort((a, b) => Math.abs(b.gap) - Math.abs(a.gap));
+  const out = [];
+  for (const p of roster) {
+    if (!RANKED_POSITIONS.has(p.pos)) continue;
+    const m = market.byId.get(p.id);
+    const theirRank = posRankNumber(m?.posRank);
+    const ourRank = ourRankAt.get(p.id);
+    if (!theirRank || !ourRank) continue;
+    const pool = poolAt.get(p.pos) || 40;
+    const gate = Math.max(6, Math.ceil(pool * 0.10));
+    const gap = theirRank - ourRank;           // + = we rank him higher
+    if (Math.abs(gap) < gate) continue;
+    out.push({ ...p, ourRank, theirRank, gap, gate, grade: m.grade || null });
+  }
+  return out.sort((a, b) => Math.abs(b.gap) - Math.abs(a.gap));
 }

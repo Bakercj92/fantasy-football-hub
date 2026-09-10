@@ -149,14 +149,18 @@ function marketBlock(L, state) {
   const rows = d.map((p) => {
     const dir = p.gap > 0 ? "we like him more" : "market likes him more";
     return `<tr><td class="nm">${esc(p.name)}<span class="pos">${esc(p.pos)}</span></td>
-      <td class="gp">ours #${p.ourRank} · theirs #${p.theirRank}</td>
-      <td class="dir ${p.gap > 0 ? "up" : "down"}">${esc(dir)}</td></tr>`;
+      <td class="gp">ours ${esc(p.pos)}${p.ourRank} · consensus ${esc(p.pos)}${p.theirRank}${
+        p.grade ? ` (${esc(p.grade)})` : ""}</td>
+      <td class="dir ${p.gap > 0 ? "up" : "down"}">${esc(dir)} <span class="gapn">${
+        p.gap > 0 ? "+" : ""}${p.gap}</span></td></tr>`;
   }).join("");
   return `<section class="block"><h2>Where we disagree with the market <span class="ct">${d.length}</span></h2>
     <table>${rows}</table>
-    <div class="frow warn">Ranks are within your roster, not national. Consensus never moves a
-    number here — our projection is re-scored at your league's rules and measured against your
-    league's real replacement level; consensus is a 12-team default. This is a flag, not a vote.</div>
+    <div class="frow warn">Ranks are <b>within position</b>, against every player we priced —
+    consensus publishes ECR on per-position pages, so cross-position comparison is meaningless.
+    Kickers and defenses are excluded as streaming noise. Consensus never moves a number here: our
+    projection is re-scored at your league's rules and measured against your league's real
+    replacement level, where consensus is a 12-team default. A flag, not a vote.</div>
   </section>`;
 }
 

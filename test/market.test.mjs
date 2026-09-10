@@ -26,66 +26,84 @@ t("parseCSV keeps the real FantasyPros header shape", () => {
   assert.strictEqual(r.ecr, "2.06");
 });
 
-const mkt = (pairs) => ({ byId: new Map(pairs.map(([id, ecr]) => [id, { ecr, posRank: null }])) });
+// market fixture: byId keyed by sleeper id -> {posRank, grade}
+const mkt = (pairs) => ({ ok: true, byId: new Map(pairs.map(([id, posRank]) => [id, { posRank, grade: null }])) });
 
-const R = (id, pos, pts, vor) => ({ id, pos, pts, vor, name: id.toUpperCase() });
+// a priced universe: n players at a position, descending points
+const universe = (spec) => {
+  const m = new Map();
+  for (const [pos, n] of Object.entries(spec))
+    for (let i = 0; i < n; i++)
+      m.set(`${pos}${i + 1}`, { id: `${pos}${i + 1}`, pos, pts: 30 - i * 0.1, startable: true, name: `${pos}${i + 1}` });
+  return m;
+};
 
-t("disagreements compare ranks WITHIN the roster, never national ECR", () => {
-  const roster = [R("a","WR",20,10), R("b","WR",15,6), R("c","WR",10,2), R("d","WR",9,1)];
-  const d = disagreements(roster, mkt([["a",300],["b",200],["c",100],["d",50]]), 2);
-  const a = d.find((p) => p.id === "a");
-  assert.strictEqual(a.ourRank, 1);
-  assert.strictEqual(a.theirRank, 4);
-  assert.strictEqual(a.gap, 3);
+t("cross-position ECR is NEVER used - a kicker cannot outrank a receiver", () => {
+  // The live-site bug: consensus publishes per-position pages, so a kicker
+  // with rank 1 floated above every skill player and dominated the list.
+  const priced = universe({ WR: 120, K: 32 });
+  const roster = [priced.get("WR40"), priced.get("K1")];
+  const market = mkt([["WR40", "WR40"], ["K1", "K1"]]);
+  const d = disagreements(roster, market, priced);
+  assert.ok(!d.some((p) => p.pos === "K"), "kickers must be excluded entirely");
 });
 
-t("our side ranks by VOR, not raw points - QBs must not outrank everyone", () => {
-  // The QB scores the most points but is barely above a freely available QB.
-  // A raw-points ranking calls him our #1; VOR correctly calls him our last.
-  const roster = [
-    R("qb","QB",24,0.4), R("rb","RB",16,9.5), R("wr","WR",14,7.2), R("te","TE",11,5.1),
-  ];
-  const d = disagreements(roster, mkt([["qb",1],["rb",2],["wr",3],["te",4]]), 1);
-  const qb = d.find((p) => p.id === "qb");
-  assert.strictEqual(qb.ourRank, 4, "VOR must rank the replaceable QB last");
-  assert.strictEqual(qb.theirRank, 1);
+t("comparison is within position, our rank against their pos_rank", () => {
+  const priced = universe({ RB: 80 });
+  const roster = [priced.get("RB12")];
+  const d = disagreements(roster, mkt([["RB12", "RB34"]]), priced);
+  assert.strictEqual(d.length, 1);
+  assert.strictEqual(d[0].ourRank, 12);
+  assert.strictEqual(d[0].theirRank, 34);
+  assert.strictEqual(d[0].gap, 22, "positive gap means WE rank him higher");
 });
 
-t("falls back to raw points when VOR is unavailable", () => {
-  const roster = [
-    { id:"a", pos:"WR", pts:20, name:"A" }, { id:"b", pos:"WR", pts:15, name:"B" },
-    { id:"c", pos:"WR", pts:10, name:"C" }, { id:"d", pos:"WR", pts:5, name:"D" },
-  ];
-  const d = disagreements(roster, mkt([["a",400],["b",300],["c",200],["d",100]]), 2);
-  assert.strictEqual(d.find((p) => p.id === "a").ourRank, 1);
+t("pos_rank strings are parsed, not assumed numeric", () => {
+  const priced = universe({ TE: 40 });
+  const roster = [priced.get("TE5")];
+  assert.strictEqual(disagreements(roster, mkt([["TE5", "TE28"]]), priced)[0].theirRank, 28);
+  assert.strictEqual(disagreements(roster, mkt([["TE5", "garbage"]]), priced).length, 0);
+  assert.strictEqual(disagreements(roster, mkt([["TE5", null]]), priced).length, 0);
 });
 
-t("players the market has never heard of are skipped, not scored zero", () => {
-  const roster = [R("k","RB",10,5), R("l","RB",9,4), R("m","RB",8,3), R("n","RB",7,2),
-                  { id:"unknown", pos:"RB", pts:9, vor:4.5, name:"U" }];
-  const d = disagreements(roster, mkt([["k",50],["l",40],["m",30],["n",20]]), 0);
-  assert.ok(!d.some((p) => p.id === "unknown"));
+t("the gate SCALES with how deep the market ranks that position", () => {
+  // Same 8-rank gap: a real disagreement at TE, noise at WR.
+  const te = universe({ TE: 40 });
+  const wr = universe({ WR: 150 });
+  const teMarket = mkt(Array.from({length:40},(_,i)=>[`TE${i+1}`,`TE${i+1}`]).concat([["TE5","TE13"]]));
+  const wrMarket = mkt(Array.from({length:150},(_,i)=>[`WR${i+1}`,`WR${i+1}`]).concat([["WR5","WR13"]]));
+  assert.strictEqual(disagreements([te.get("TE5")], teMarket, te).length, 1, "8 ranks at TE counts");
+  assert.strictEqual(disagreements([wr.get("WR5")], wrMarket, wr).length, 0, "8 ranks at WR is noise");
 });
 
-t("the gap gate SCALES with roster size", () => {
-  const small = Array.from({length:5}, (_,i) => R(`s${i}`,"WR",20-i,10-i));
-  const big   = Array.from({length:20},(_,i) => R(`b${i}`,"WR",30-i,15-i*0.5));
-  const rev = (rs) => mkt(rs.map((p,i) => [p.id, rs.length - i]));
-  // Perfectly reversed rankings: gate must let the extremes through in both.
-  assert.ok(disagreements(small, rev(small)).length > 0);
-  assert.ok(disagreements(big,   rev(big)).length > 0);
-  // ...but a 20-player roster demands a bigger gap than a 5-player one.
-  assert.ok(Math.ceil(20/5) > Math.max(3, Math.ceil(5/5)) - 1);
+t("our rank comes from the WHOLE priced universe, not just the roster", () => {
+  // If our rank were roster-relative, a one-player roster would rank him #1
+  // and manufacture a gap against any consensus rank at all.
+  const priced = universe({ RB: 80 });
+  const d = disagreements([priced.get("RB60")], mkt([["RB60", "RB58"]]), priced);
+  assert.strictEqual(d.length, 0, "RB60 vs RB58 is agreement, not a 59-rank gap");
 });
 
-t("a roster too small to rank meaningfully returns nothing", () => {
-  const roster = [R("a","WR",20,9), R("b","WR",10,3)];
-  assert.strictEqual(disagreements(roster, mkt([["a",9],["b",1]])).length, 0);
+t("ruled-out players do not distort our positional ranking", () => {
+  const priced = universe({ WR: 120 });
+  priced.get("WR1").startable = false;
+  const d = disagreements([priced.get("WR2")], mkt([["WR2", "WR2"]]), priced);
+  assert.strictEqual(d.length, 0);
+});
+
+t("a missing priced universe returns nothing rather than throwing", () => {
+  assert.deepStrictEqual(disagreements([{ id:"a", pos:"WR" }], mkt([["a","WR1"]]), null), []);
+});
+
+t("an unavailable market layer returns nothing rather than throwing", () => {
+  const priced = universe({ WR: 20 });
+  assert.deepStrictEqual(disagreements([priced.get("WR1")], { ok:false, byId:new Map() }, priced), []);
 });
 
 t("agreement produces no rows at all", () => {
-  const roster = [R("a","WR",20,9), R("b","WR",15,6), R("c","WR",12,4), R("d","WR",10,2)];
-  assert.strictEqual(disagreements(roster, mkt([["a",1],["b",2],["c",3],["d",4]])).length, 0);
+  const priced = universe({ RB: 80 });
+  const roster = [priced.get("RB3"), priced.get("RB20")];
+  assert.strictEqual(disagreements(roster, mkt([["RB3","RB3"],["RB20","RB21"]]), priced).length, 0);
 });
 
 console.log(`\nmarket: ${pass} passed, ${fail} failed`);
