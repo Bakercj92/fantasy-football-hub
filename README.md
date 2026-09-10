@@ -78,18 +78,21 @@ js/sleeper.js       every live read
 js/scoring.js       rescoring + startability
 js/value.js         replacement level, VOR, measured per-position sigma
 js/market.js        consensus (FantasyPros via DynastyProcess) - never moves a number
-js/lineup.js        optimal lineup + what to change
+js/lineup.js        optimal lineup + what to change + kickoff locking
+js/schedule.js      kickoff times and the Vegas line, fetched live - no build step
+js/memory.js        decision log (a stub: records lockouts only, for Phase 5)
 js/ui.js            rendering
 js/app.js           wiring
 test/               real unit tests against the MODULES, never against built HTML
-data/               nflverse mirror (Phase 3 - the only thing a build step exists for)
+data/               empty. reserved for the Phase 3b nflverse mirror (weekly stats,
+                    snap counts, expected points). the SCHEDULE is NOT mirrored - see below.
 dormant/            the JJ take corpus, retired from the pipeline, kept for possible revival
 ```
 
 ## Test
 
 ```bash
-node test/run.mjs                # all suites: 42 assertions, 0 failures as of 2026-09-10
+node test/run.mjs                # all suites: 79 assertions, 0 failures as of 2026-09-10
 ```
 
 These test the **modules**, not rendered markup. The old project had 12,199 lines of suite of which
@@ -109,19 +112,73 @@ Kept here because both are the kind of bug only a rendered page reveals:
    points is still right when the alternative is a guaranteed zero. Questionable is deliberately
    *not* on that list: questionable players usually play.
 
-## Not wired yet (end of Phase 1)
+## Kickoff locking and Vegas (Phase 3a)
 
-- **Kickoff locking.** A starter whose game has begun can still raise an instruction Sleeper would
-  refuse. Needs the schedule (Phase 3).
+**The schedule needs no build step.** nflverse release assets fail CORS, which is why the original
+plan had a weekly job mirroring `games.csv`. But the same file is published in-tree at
+`raw.githubusercontent.com/nflverse/nfldata/master/data/games.csv`, which sends
+`access-control-allow-origin: *`. Verified byte-for-byte against the release asset on 2026-09-10:
+7,548 rows each, identical headers, and the only 48 differing rows differ solely by `-0` versus `0`
+float rendering in `spread_line`. 511 KB gzipped, `max-age=300`.
+
+That is better than a mirror rather than merely cheaper: spreads and totals move all week, so a
+Tuesday mirror would be three days stale by Sunday morning.
+
+**Kickoffs are converted from Eastern with the real DST rules**, never a fixed offset. `gametime`
+is Eastern wall-clock, so September is UTC-4 and December is UTC-5; subtracting a constant would
+shift every late-season lock by an hour. `Intl.DateTimeFormat` on `America/New_York` is asked what
+the offset actually was at that instant. Brute-forced against `Intl` over 946 date/time pairs
+spanning both 2026 and 2027 transitions: zero mismatches.
+
+**A locked player is excluded from both sides of the decision.** Sleeper refuses to move a player
+whose game has started in either direction, so a locked starter is pinned to his slot and a locked
+bench player is removed from the pool. The tool solves around them and never raises an instruction
+that would be refused.
+
+**Two solves, deliberately.** The constrained lineup is what to do; the same solve with locks
+ignored is the counterfactual. Their difference is the set of calls that were real and arrived too
+late, shown as "too late this week" - never as an instruction, because there is nothing to do about
+it - and written to `js/memory.js` for Phase 5 to read back.
+
+**The Vegas read never moves a number.** Spread, game total and implied team total appear in the
+reasoning behind a call and nowhere else. `spread_line` is the points the HOME team is favoured by,
+confirmed against live moneylines. Books price about six weeks out, so most of the season
+legitimately carries no line and the layer degrades to empty rather than to zero.
+
+**Team codes disagree between the two feeds, silently.** All 32 match except one: nflverse writes
+the Rams as `LA`, Sleeper writes `LAR`. Unaliased, every Rams player would simply never find a game
+- no lock, no line, no error. `schedule.js` normalises, and `unknownTeams()` reports a code the
+schedule does not recognise as a join failure rather than letting it look like a bye.
+
+## The ten-minute cache, and why it is documented rather than solved
+
+GitHub Pages serves `Cache-Control: max-age=600`, so a pushed change takes up to ten minutes to
+reach a browser that already has the page. **This is known and accepted, not an oversight.**
+
+A version query on the entry script does not actually fix it: `index.html` is served with the same
+`max-age=600`, so a new `?v=` inside it cannot be seen until `index.html` itself has refreshed. The
+window only matters in the minutes right after a push, and nobody pushes while setting a lineup.
+
+The residual risk, raised in audit and worth writing down: within that window a returning browser
+can pair a new module with an old `app.css`. If a deploy ever looks wrong immediately after a push,
+hard-reload (Ctrl+Shift+R) before debugging anything.
+
+## Not wired yet (end of Phase 3a)
+
+- ~~Kickoff locking~~ **DONE.** See above.
 - ~~Variance thresholds~~ **DONE.** Per-position sigma, measured live from the starter-caliber
   pool. Threshold is half a sigma, floored at 1.0 and capped at 2.0; a comparison spanning two
   positions takes the larger, not quadrature - the question is "could this gap be noise", and the
   noisier player decides that.
-- **Kicker totals** marked with a floor sign are floors - the feed carries no yardage-bonus field.
-- ~~Replacement level~~ **DONE and measured**, see above.
+- ~~Replacement level~~ **DONE and measured.**
 - ~~Market cross-check~~ **DONE.** Consensus arrives as a late enrichment and re-renders; if it
   never arrives, nothing else changes. Our side ranks by VOR, not raw points, because within one
   roster the comparison is cross-position and raw points make every quarterback look like a stud.
-  The disagreement gate scales with roster size - a gap of 8 ranks is enormous inside a 16-player
-  roster and unremarkable inside a national top-200.
-- No usage, matchup, waiver or decision-memory layer yet. Those are Phases 3-5.
+  The disagreement gate scales with roster size.
+- **Kicker totals** marked with a floor sign are floors - the feed carries no yardage-bonus field.
+- **The usage layer** (snap share, target share, expected points) is Phase 3b, together with the
+  weekly Python build that mirrors what the browser genuinely cannot reach. Those 2026 files do not
+  exist until games are played.
+- **Decision memory** currently records lockouts only. The full layer is Phase 5, with waivers
+  and FAAB.
+- **Depth charts** were considered and cut: a depth chart predicts usage, and Phase 3b measures it.

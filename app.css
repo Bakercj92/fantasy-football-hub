@@ -65,10 +65,10 @@ table{width:100%;table-layout:fixed;border-collapse:collapse;
 td{padding:9px 11px;border-top:1px solid var(--line-soft);font-size:var(--s3);vertical-align:baseline}
 tr:first-child td{border-top:0}
 .slot{width:86px;color:var(--dim);font-size:var(--s1);font-weight:700;letter-spacing:.04em}
-.nm{overflow-wrap:anywhere}
+.nm{overflow-wrap:break-word;hyphens:none}
 .nm .pos{color:var(--dim);font-size:var(--s1);margin-left:7px;font-weight:600}
 .tm{color:var(--mute);font-size:var(--s2);width:58px}
-.opp{color:var(--mute);font-size:var(--s2);width:58px}
+.opp{color:var(--mute);font-size:var(--s2);width:128px;white-space:nowrap}
 .opp .bye{color:var(--warn)}
 .pt{text-align:right;font-variant-numeric:tabular-nums;font-weight:600;
   white-space:nowrap;width:112px}
@@ -96,11 +96,11 @@ footer{margin-top:30px;border-top:1px solid var(--line-soft);padding-top:15px}
 
 @media(max-width:560px){
   #app{padding:16px 12px 50px}
-  td{padding:8px 8px}
-  .slot{width:60px;font-size:10px}
+  td{padding:8px 7px}
+  .slot{width:50px;font-size:10px}
   .tm{display:none}
-  .opp{width:44px;font-size:var(--s1)}
-  .pt{width:92px;font-size:var(--s2)}
+  .opp{width:52px;font-size:var(--s1)}
+  .pt{width:78px;font-size:var(--s2)}
   .title{font-size:var(--s4)}
 }
 
@@ -118,5 +118,36 @@ tr.th td{font-size:9.5px;letter-spacing:.07em;text-transform:uppercase;color:var
 .gp{color:var(--mute);font-size:var(--s2);width:170px}
 .dir{font-size:var(--s2);width:150px}
 .dir.up{color:var(--act)} .dir.down{color:var(--mute)}
-@media(max-width:560px){ .vor{width:48px;font-size:var(--s1)} .gp,.dir{font-size:var(--s1);width:auto} }
+@media(max-width:560px){ .vor{width:44px;font-size:var(--s1)} .gp,.dir{font-size:var(--s1);width:auto} }
 .gapn{color:var(--dim);font-variant-numeric:tabular-nums}
+
+/* Kickoff locking and the Vegas read.
+   The lock glyph survives on a phone; the kickoff time does not - the table
+   is already down to about 130px for a player name at 390px wide, and one
+   more label there is what turns a tidy table into a horizontal scrollbar. */
+.opp .kick{color:var(--dim);font-size:10px;margin-left:6px;white-space:nowrap}
+.opp .lock{margin-left:6px;font-size:10px}
+tr.locked td{background:rgba(255,255,255,.022)}
+tr.locked .nm,tr.locked .pt,tr.locked .vor,tr.locked .tm,
+tr.locked .slot,tr.locked .opp{opacity:.5}
+/* The padlock keeps full opacity - it is the one thing in a greyed row that
+   still has to be legible, and on a phone it is the only label there is. */
+tr.locked .opp .lock{opacity:1}
+.veg{margin-top:6px;color:var(--mute)}
+
+/* Too-late block: reference weight, not decision weight. It is never an
+   instruction, so it must not look like one. */
+.locked-out h2{color:var(--dim)}
+.locked-out .frow{font-size:var(--s2)}
+
+/* A schedule failure is louder than a market failure, because locking is a
+   correctness feature and the market layer is an enrichment. */
+.calls.sched-warn{border-color:var(--warn);background:transparent;padding:12px 15px}
+.calls.sched-warn .frow{margin-bottom:0;color:var(--mute)}
+.calls.sched-warn .frow + .frow{margin-top:9px}
+
+@media(max-width:560px){
+  .opp .kick{display:none}
+  /* Tight enough that "SEA" and the padlock stay on one line in 52px. */
+  .opp .lock{margin-left:3px;font-size:9px}
+}
