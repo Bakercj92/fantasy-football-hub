@@ -1,0 +1,121 @@
+/* One token set. Every colour and size on this page comes from here.
+   The old tool had 104 colours, 61 of them used exactly once, and zero
+   custom properties. That is how a UI stops being rankable: when every
+   value is bespoke, nothing is emphasised, so nothing reads as the answer. */
+:root{
+  --bg:#0B1017;
+  --surface:#141C28;
+  --raised:#1C2637;
+  --line:#28344A;
+  --line-soft:#1F2937;
+  --text:#EEF2F8;
+  --mute:#93A2B8;
+  --dim:#64748B;
+  --act:#F5C451;
+  --act-fill:#332A0B;
+  --ok:#4ADE80;
+  --warn:#FB923C;
+  --bad:#F87171;
+  --s1:11px; --s2:12.5px; --s3:14px; --s4:16px; --s5:20px;
+  --r:10px;
+}
+*{box-sizing:border-box}
+html,body{background:var(--bg)}
+body{margin:0;color:var(--text);
+  font:var(--s3)/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Arial,sans-serif;
+  -webkit-font-smoothing:antialiased}
+#app{max-width:900px;margin:0 auto;padding:22px 18px 60px}
+
+header{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:14px}
+.title{font-size:var(--s5);font-weight:650;letter-spacing:-.01em}
+.wk{font-size:var(--s2);color:var(--mute);white-space:nowrap}
+
+.tabs{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:18px}
+.tab{padding:8px 15px;border-radius:99px;cursor:pointer;
+  background:var(--surface);border:1px solid var(--line-soft);color:var(--mute);
+  font-size:var(--s2);font-weight:600;font-family:inherit}
+.tab:hover{color:var(--text);border-color:var(--line)}
+.tab.on{background:var(--raised);border-color:var(--act);color:var(--text)}
+
+/* The decision block IS the page. Everything below it is reference. */
+.calls{border-radius:var(--r);padding:16px 17px;margin-bottom:22px;
+  border:1px solid var(--line-soft);background:var(--surface)}
+.calls.act{border-color:var(--act);background:var(--act-fill)}
+.calls .hd{font-size:var(--s4);font-weight:650;margin-bottom:12px;
+  display:flex;justify-content:space-between;align-items:baseline;gap:10px}
+.calls .tot{font-size:var(--s2);color:var(--act);font-weight:600;white-space:nowrap}
+.calls .ok{font-size:var(--s4);font-weight:600;color:var(--ok)}
+.calls .sub{font-size:var(--s1);color:var(--mute);margin-top:10px}
+.call{border-top:1px solid rgba(255,255,255,.09);padding:9px 0;cursor:pointer}
+.call:first-of-type{border-top:0;padding-top:0}
+.call .line{display:flex;flex-wrap:wrap;align-items:baseline;gap:7px;font-size:var(--s3)}
+.call .over{color:var(--mute)}
+.call .delta{margin-left:auto;color:var(--act);font-weight:650;font-size:var(--s2)}
+.call .why{display:none;font-size:var(--s2);color:var(--mute);padding:9px 0 3px;line-height:1.6}
+.call.open .why{display:block}
+.call .inj{color:var(--warn)}
+
+.block{margin-bottom:20px}
+h2{font-size:var(--s2);font-weight:600;text-transform:uppercase;letter-spacing:.06em;
+  color:var(--mute);margin:0 0 8px;display:flex;gap:8px;align-items:center}
+h2 .ct{color:var(--dim);font-weight:500}
+
+table{width:100%;table-layout:fixed;border-collapse:collapse;
+  background:var(--surface);border-radius:var(--r);overflow:hidden}
+td{padding:9px 11px;border-top:1px solid var(--line-soft);font-size:var(--s3);vertical-align:baseline}
+tr:first-child td{border-top:0}
+.slot{width:86px;color:var(--dim);font-size:var(--s1);font-weight:700;letter-spacing:.04em}
+.nm{overflow-wrap:anywhere}
+.nm .pos{color:var(--dim);font-size:var(--s1);margin-left:7px;font-weight:600}
+.tm{color:var(--mute);font-size:var(--s2);width:58px}
+.opp{color:var(--mute);font-size:var(--s2);width:58px}
+.opp .bye{color:var(--warn)}
+.pt{text-align:right;font-variant-numeric:tabular-nums;font-weight:600;
+  white-space:nowrap;width:112px}
+.pt .na{color:var(--dim);font-weight:400}
+.empty{color:var(--dim);font-style:italic}
+.chip{display:inline-block;margin-left:6px;padding:1px 6px;border-radius:99px;
+  font-size:9.5px;font-weight:700;letter-spacing:.03em;vertical-align:middle}
+.chip.q{background:#3B2E0B;color:#FBBF24}
+.chip.dbt{background:#3B1F0B;color:var(--warn)}
+.chip.out,.chip.ir,.chip.pup,.chip.sus,.chip.cov{background:#3B1414;color:var(--bad)}
+
+footer{margin-top:30px;border-top:1px solid var(--line-soft);padding-top:15px}
+.frow{font-size:var(--s1);color:var(--mute);line-height:1.65;margin-bottom:8px}
+.frow.warn{color:var(--dim)}
+.frow a{color:var(--mute)}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.small{font-size:10.5px;color:var(--dim);margin-top:5px;overflow-wrap:anywhere}
+.loading{color:var(--mute);padding:50px 0;text-align:center}
+.spin{display:inline-block;width:11px;height:11px;margin-right:9px;vertical-align:-1px;
+  border:2px solid var(--line);border-top-color:var(--act);border-radius:50%;
+  animation:sp .7s linear infinite}
+@keyframes sp{to{transform:rotate(360deg)}}
+.err{background:#2A1414;border:1px solid var(--bad);border-radius:var(--r);padding:16px}
+.err .mono{font-size:var(--s1);color:var(--bad);margin:8px 0}
+
+@media(max-width:560px){
+  #app{padding:16px 12px 50px}
+  td{padding:8px 8px}
+  .slot{width:60px;font-size:10px}
+  .tm{display:none}
+  .opp{width:44px;font-size:var(--s1)}
+  .pt{width:92px;font-size:var(--s2)}
+  .title{font-size:var(--s4)}
+}
+
+.call.hard .line b{color:var(--bad)}
+.delta.forced{color:var(--bad);text-transform:uppercase;font-size:var(--s1);letter-spacing:.06em}
+tr.dead .nm,tr.dead .pt{opacity:.55}
+
+.hint{color:var(--dim)}
+.mkt{margin-top:6px;color:var(--mute)}
+.pending{color:var(--dim);font-size:var(--s1);padding:4px 2px}
+tr.th td{font-size:9.5px;letter-spacing:.07em;text-transform:uppercase;color:var(--dim);
+  font-weight:700;padding-top:8px;padding-bottom:6px}
+.vor{width:62px;text-align:right;font-variant-numeric:tabular-nums;
+  font-size:var(--s2);color:var(--mute)}
+.gp{color:var(--mute);font-size:var(--s2);width:170px}
+.dir{font-size:var(--s2);width:150px}
+.dir.up{color:var(--act)} .dir.down{color:var(--mute)}
+@media(max-width:560px){ .vor{width:48px;font-size:var(--s1)} .gp,.dir{font-size:var(--s1);width:auto} }

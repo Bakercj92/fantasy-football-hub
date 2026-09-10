@@ -1,0 +1,17 @@
+# The JJ take corpus stays LOCAL and is deliberately not published.
+#
+# It is derived from transcribed podcast episodes. The repo is public (GitHub
+# Pages serves from it), and pushing 16 MB of someone else's transcribed show
+# to a public URL is a copyright problem we do not need. It lives on disk and
+# in OneDrive, which is where a dormant archive belongs.
+dormant/
+
+# Local scratch
+.DS_Store
+Thumbs.db
+node_modules/
+*.log
+
+# Junk this session could not delete (the device bridge blocks unlink).
+# Safe to delete by hand in Explorer.
+_to_delete/

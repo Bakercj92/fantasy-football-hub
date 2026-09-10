@@ -1,0 +1,9 @@
+{
+  "_what_this_is": "The ONLY config. A league is a Sleeper id and a display name. Everything else - scoring, roster slots, FAAB, playoff week, team count - is read live from Sleeper on every page open, on purpose: Ball Knowers changed shape mid-season once and a baked config was wrong for a month.",
+  "user_id": "1135437440241680384",
+  "sleeper_username": "KurtChillingsworth",
+  "leagues": [
+    { "key": "joop", "name": "Joop Squad",         "sleeper_id": "1389373222666932224" },
+    { "key": "bku",  "name": "Ball Knowers United", "sleeper_id": "1393723474328981504" }
+  ]
+}
