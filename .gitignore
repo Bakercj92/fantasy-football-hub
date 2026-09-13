@@ -15,3 +15,9 @@ node_modules/
 # Junk this session could not delete (the device bridge blocks unlink).
 # Safe to delete by hand in Explorer.
 _to_delete/
+
+# Working backups. These are superseded copies of the app; publishing them
+# would put dormant code - including the exact VOR fallback a changeset
+# removed - at a public URL.
+*.bak-*
+*.bak

@@ -47,8 +47,31 @@ t("vor is null for an unprojected player, never zero", () => {
   assert.strictEqual(vor(undefined, {}), null);
 });
 
-t("vor falls back to raw points when a position has no free agent at all", () => {
-  assert.strictEqual(vor({ pos:"K", pts:8 }, {}), 8);
+t("REGRESSION: VOR is null when replacement level could not be measured, never the raw projection", () => {
+  // THIS TEST REVERSES ITSELF. It previously asserted the opposite - that VOR
+  // "falls back to raw points when a position has no free agent at all" - and
+  // the implementation did exactly that via `?? 0`.
+  //
+  // That was defensible while VOR was a display column: a slightly wrong
+  // number in a corner case nobody hits, since a real 14-team league always
+  // has a free receiver. It stopped being defensible when the compare tool
+  // made VOR its RANKING AXIS across positions. Under the fallback, a position
+  // with no free agent has its VOR inflated to the player's whole projection,
+  // so that player outranks everyone measured against a real replacement
+  // level - and the row is labelled "points over the best free agent", which
+  // in that state is simply false.
+  //
+  // An unmeasurable number is not zero. Null makes the gap visible: the column
+  // blanks, the compare axis falls back to raw projections, and the "+X over
+  // the best free RB" sentence is not said at all.
+  assert.strictEqual(vor({ pos:"K", pts:8 }, {}), null);
+  assert.strictEqual(vor({ pos:"TE", pts:11 }, { RB:{ pts:4 } }), null,
+    "another position having a level does not give THIS position one");
+  assert.strictEqual(vor({ pos:"TE", pts:11 }, { TE:{ pts:4 } }), 7);
+});
+
+t("a player with no projection still has no VOR", () => {
+  assert.strictEqual(vor({ pos:"RB", pts:null }, { RB:{ pts:4 } }), null);
 });
 
 t("sigma is measured over the starter-caliber pool only", () => {

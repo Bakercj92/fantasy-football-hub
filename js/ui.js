@@ -1,3 +1,5 @@
+import { compare } from "./compare.js";
+
 const $ = (sel) => document.querySelector(sel);
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -55,7 +57,26 @@ const chip = (s) => {
   return `<span class="chip ${cls}" title="${esc(s)}">${esc(label)}</span>`;
 };
 
-export function render(state, onSwitch) {
+// WHICH SECTIONS ARE ALLOWED TO SPEAK TODAY.
+//
+// Phase D turns this into the real day-shaped page: a Tuesday view, a Thursday
+// view, a Sunday view, each promoting and demoting what is already built. It
+// is stubbed always-true now ON PURPOSE, so every section shipped before then
+// declares its day rule at birth and Phase D fills in one function instead of
+// re-wrapping five sections that never had one.
+//
+// The successor to the old "a new surface must replace a named old one" rule,
+// which fires on none of the rebuild phases because there are no old surfaces
+// left in this app to retire: A NEW SECTION MUST BE INVISIBLE BY DEFAULT AND
+// MUST NAME THE CONDITION UNDER WHICH IT APPEARS. The condition for `compare`
+// is below - two or more players selected. There is no way to reach it by
+// accident and nothing to dismiss when you are not using it.
+export function visible(_section, _day = new Date().getDay()) {
+  return true;
+}
+
+export function render(state, handlers) {
+  const { onSwitch, onToggle, onClear } = handlers;
   const L = state.leagues[state.active];
   const tabs = state.cfg.leagues.map((e) =>
     `<button class="tab${e.key === state.active ? " on" : ""}" data-k="${esc(e.key)}">${esc(e.name)}</button>`
@@ -69,9 +90,10 @@ export function render(state, onSwitch) {
     <nav class="tabs">${tabs}</nav>
     ${scheduleWarning(state, L)}
     ${callsBlock(L)}
+    ${visible("compare") ? compareBlock(L, state) : ""}
     ${lockedBlock(L)}
-    ${lineupTable(L)}
-    ${benchTable(L)}
+    ${lineupTable(L, state)}
+    ${benchTable(L, state)}
     ${marketBlock(L, state)}
     ${footer(L, state)}`;
 
@@ -79,7 +101,97 @@ export function render(state, onSwitch) {
     b.addEventListener("click", () => onSwitch(b.dataset.k)));
   document.querySelectorAll(".call").forEach((el) =>
     el.addEventListener("click", () => el.classList.toggle("open")));
-  document.querySelectorAll("details.fold").forEach(() => {});
+  // The compare selector sits inside a table row that is not itself clickable,
+  // so the toggle handles its own click and stops it there.
+  document.querySelectorAll("[data-sel]").forEach((el) =>
+    el.addEventListener("click", (ev) => { ev.stopPropagation(); onToggle(el.dataset.sel); }));
+  const clear = document.querySelector("[data-clear]");
+  if (clear) clear.addEventListener("click", onClear);
+  document.querySelectorAll(".mrow").forEach((el) =>
+    el.addEventListener("click", () => el.classList.toggle("open")));
+}
+
+// ---------------------------------------------------------------------------
+// The compare surface.
+//
+// Invisible until you select a player, which is the appearance condition this
+// section declares (see visible() above). Metrics as rows, players as columns,
+// because the metric list is data and grows - Phase B appends usage, 2027
+// appends draft rows - and a table that grows downward survives that where one
+// that grows sideways does not.
+//
+// The tool decides and the arithmetic sits behind a tap: the verdict is one
+// line, and every metric row opens to say what the number means and why it is
+// or is not allowed to be compared here.
+// ---------------------------------------------------------------------------
+function compareBlock(L, state) {
+  const sel = state.selection[state.active] || new Set();
+  if (sel.size === 0) return "";
+
+  if (sel.size === 1) {
+    const only = L.byId.get([...sel][0]);
+    return `<section class="cmp one">
+      <div class="hd">Compare <button class="clr" data-clear>clear</button></div>
+      <div class="sub">${esc(only?.name || "Player")} picked. Choose at least one more —
+        tap the ⚖ next to any player in your lineup or on your bench.</div>
+    </section>`;
+  }
+
+  const c = compare([...sel], { byId: L.byId, sigma: L.sigma, slots: L.slots });
+  // Fewer than two of the selected ids still resolve - a drop or a trade
+  // between re-solves. Returning "" here would take the clear button with it
+  // and strand the selection with no way to dismiss it.
+  if (c.mode === "empty") {
+    return `<section class="cmp one">
+      <div class="hd">Compare <button class="clr" data-clear>clear</button></div>
+      <div class="sub">The players you picked are no longer on this roster.</div>
+    </section>`;
+  }
+
+  const heads = c.players.map((p) =>
+    `<td class="cp"><span class="cn">${esc(p.name)}</span><span class="pos">${esc(p.pos)}</span>${
+      p.injury ? chip(p.injury) : ""}${p.locked ? '<span class="lock" title="already kicked off">&#128274;</span>' : ""}</td>`
+  ).join("");
+
+  const rows = c.rows.map((r) => `
+    <tr class="mrow" title="tap for what this means">
+      <td class="ml">${esc(r.label)}</td>
+      ${r.cells.map((cell) => `<td class="cv${cell.best ? " win" : ""}">${esc(cell.text)}</td>`).join("")}
+    </tr>
+    <tr class="mnote"><td colspan="${c.players.length + 1}">${esc(r.note)}</td></tr>`).join("");
+
+  const head = c.mode === "head-to-head"
+    ? `<div class="verdict${c.verdict.decisive ? " yes" : " tie"}">${esc(c.verdict.text)}</div>
+       <div class="sub">${esc(c.verdict.why)}</div>`
+    : `<div class="verdict">Ranked by ${esc(c.axis ? c.axis.label.toLowerCase() : "projection")}</div>
+       <div class="sub">${c.players.length} players${c.mixed
+         ? ` across ${esc(c.positions.join("/"))} — only numbers that mean the same thing in every
+            one of those positions are shown.` : ` at ${esc(c.positions[0] || "")}.`}</div>`;
+
+  const dropped = c.droppedForMixing.length
+    ? `<div class="frow warn"><b>Hidden because you are comparing across positions:</b>
+        ${esc(c.droppedForMixing.join(", "))}. Consensus is published per position, so an RB12 and a
+        WR12 are not the same claim — showing them side by side would invent a comparison that does
+        not exist. Pick players at one position to see them.</div>`
+    : "";
+
+  const waiting = c.players.some((p) => p.ros === undefined)
+    ? `<div class="frow pending">Pulling rest-of-season…</div>` : "";
+
+  return `<section class="cmp">
+    <div class="hd">Compare <span class="ct">${c.players.length}</span>
+      <button class="clr" data-clear>clear</button></div>
+    ${head}
+    <div class="scroll"><table class="cmpt">
+      <tr class="th"><td class="ml"></td>${heads}</tr>
+      ${rows}
+    </table></div>
+    ${waiting}
+    ${dropped}
+    ${L.fcalc && !L.fcalc.ok
+      ? `<div class="frow warn">Market values unavailable this load — the value and rank rows are
+          hidden rather than guessed.</div>` : ""}
+  </section>`;
 }
 
 function callsBlock(L) {
@@ -143,10 +255,19 @@ function marketLine(inP, outP) {
   return bits.length ? `<div class="mkt">Market: ${bits.join(" · ")}.</div>` : "";
 }
 
-function row(p, slot) {
-  if (!p) return `<tr><td class="slot">${esc(slot)}</td><td colspan="5" class="empty">— empty —</td></tr>`;
-  const cls = [p.startable === false ? "dead" : "", p.locked ? "locked" : ""].filter(Boolean).join(" ");
+function row(p, slot, selected = false) {
+  // The leading empty selector cell is NOT optional. The header is seven
+  // columns with .sel first; without it the slot label renders under the
+  // selector header and everything after shifts one column left. The colspan
+  // was bumped 5->6 when the column was added and this cell was forgotten,
+  // which the render sweep missed because it only ever inspected row 0.
+  if (!p) return `<tr><td class="sel"></td><td class="slot">${esc(slot)}</td>` +
+    `<td colspan="5" class="empty">— empty —</td></tr>`;
+  const cls = [p.startable === false ? "dead" : "", p.locked ? "locked" : "", selected ? "picked" : ""]
+    .filter(Boolean).join(" ");
   return `<tr${cls ? ` class="${cls}"` : ""}>
+    <td class="sel"><button class="pick${selected ? " on" : ""}" data-sel="${esc(p.id)}"
+      aria-pressed="${selected}" title="Compare ${esc(p.name)}">${selected ? "&#10003;" : "&#9878;"}</button></td>
     <td class="slot">${esc(slot)}</td>
     <td class="nm">${esc(p.name)}<span class="pos">${esc(p.pos)}</span></td>
     <td class="tm">${esc(p.team)}</td>
@@ -166,22 +287,24 @@ function row(p, slot) {
 // gave a player name 67 pixels at phone width, which broke "Starting
 // Quarterback" across three lines mid-word. Present since Phase 1 and
 // invisible until the Opp column grew a kickoff time.
-const tableHead = `<tr class="th"><td class="slot"></td><td class="nm">Player</td>
+const tableHead = `<tr class="th"><td class="sel"></td><td class="slot"></td><td class="nm">Player</td>
   <td class="tm">Tm</td><td class="opp">Opp</td>
   <td class="vor">VOR</td><td class="pt">Proj</td></tr>`;
 
-function lineupTable(L) {
+function lineupTable(L, state) {
+  const sel = state.selection[state.active] || new Set();
   const cur = L.slots.map((slot, i) => [slot, L.byId.get(String(L.starters[i]))]);
   return `<section class="block"><h2>Your lineup</h2>
-    <table>${tableHead}${cur.map(([s, p]) => row(p, s)).join("")}</table></section>`;
+    <table>${tableHead}${cur.map(([s, p]) => row(p, s, p ? sel.has(p.id) : false)).join("")}</table></section>`;
 }
 
-function benchTable(L) {
+function benchTable(L, state) {
+  const sel = state.selection[state.active] || new Set();
   const starting = new Set(L.starters.map(String));
   const bench = L.roster.filter((p) => !starting.has(p.id)).sort((a, b) => (b.pts ?? -1) - (a.pts ?? -1));
   if (!bench.length) return "";
   return `<section class="block"><h2>Bench <span class="ct">${bench.length}</span></h2>
-    <table>${tableHead}${bench.map((p) => row(p, "BN")).join("")}</table></section>`;
+    <table>${tableHead}${bench.map((p) => row(p, "BN", sel.has(p.id))).join("")}</table></section>`;
 }
 
 // The calls that stopped being possible. Never phrased as an instruction -

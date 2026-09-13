@@ -40,10 +40,26 @@ export function replacementLevels(priced, rostered) {
 }
 
 // Value over replacement, in this league, this week.
-export const vor = (player, levels) =>
-  typeof player?.pts === "number"
-    ? Math.round((player.pts - (levels[player.pos]?.pts ?? 0)) * 100) / 100
-    : null;
+//
+// NULL WHEN REPLACEMENT LEVEL COULD NOT BE MEASURED, NEVER A FALLBACK OF ZERO.
+//
+// The first version subtracted `levels[pos]?.pts ?? 0`, so a position with no
+// free player at all quietly produced VOR === the raw projection: a number
+// labelled "points over the best free agent" that was nothing of the kind, and
+// which the compare tool then used as its ranking axis. Caught by rendering
+// against a fixture deep enough to roster every player - the unit tests all
+// passed, because they had all been written with a free pool present.
+//
+// Returning null instead makes the gap visible: the VOR column goes blank, the
+// compare tool falls back to raw projections as its axis, and the "+X over the
+// best free RB" sentence is simply not said. An unmeasurable number is not
+// zero.
+export const vor = (player, levels) => {
+  if (typeof player?.pts !== "number") return null;
+  const level = levels?.[player.pos];
+  if (!level || typeof level.pts !== "number") return null;
+  return Math.round((player.pts - level.pts) * 100) / 100;
+};
 
 // How noisy is a position, measured live rather than assumed.
 //

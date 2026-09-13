@@ -151,3 +151,105 @@ tr.locked .opp .lock{opacity:1}
   /* Tight enough that "SEA" and the padlock stay on one line in 52px. */
   .opp .lock{margin-left:3px;font-size:9px}
 }
+
+/* ---------------------------------------------------------------------------
+   Compare. One surface, all positions, pool or head-to-head.
+
+   Nothing here paints until a player is selected, which is the whole
+   appearance contract this section signed: invisible by default, one named
+   condition to bring it up, one button to send it away.
+   --------------------------------------------------------------------------- */
+
+/* The selector column. Narrow, quiet, and — because the tables are
+   table-layout:fixed and take every width from the FIRST row — its width
+   lives on BOTH the header cell and the body cells or the browser ignores it
+   entirely. This trap has already cost this project one bug. */
+.sel{width:34px}
+.pick{width:26px;height:26px;padding:0;line-height:1;cursor:pointer;
+  background:transparent;border:1px solid var(--line-soft);border-radius:7px;
+  color:var(--dim);font-size:var(--s2);font-family:inherit}
+.pick:hover{color:var(--text);border-color:var(--line)}
+.pick.on{background:var(--raised);border-color:var(--act);color:var(--act)}
+tr.picked .nm{color:var(--act)}
+
+.cmp{border-radius:var(--r);padding:16px 17px;margin-bottom:22px;
+  border:1px solid var(--line);background:var(--surface)}
+.cmp .hd{font-size:var(--s4);font-weight:650;margin-bottom:10px;
+  display:flex;gap:9px;align-items:baseline}
+.cmp .ct{font-size:var(--s1);color:var(--dim);font-weight:600}
+.cmp .clr{margin-left:auto;background:transparent;border:1px solid var(--line-soft);
+  border-radius:99px;padding:4px 12px;color:var(--mute);cursor:pointer;
+  font-size:var(--s1);font-family:inherit;font-weight:600}
+.cmp .clr:hover{color:var(--text);border-color:var(--line)}
+.cmp .sub{font-size:var(--s1);color:var(--mute);margin-top:8px;line-height:1.6}
+.cmp.one .sub{margin-top:0}
+
+.cmp .verdict{font-size:var(--s4);font-weight:650}
+.cmp .verdict.yes{color:var(--act)}
+.cmp .verdict.tie{color:var(--mute)}
+
+/* A pool of six at phone width is wider than the screen. Only this table
+   scrolls sideways — the page body never does. */
+.cmp .scroll{overflow-x:auto;margin-top:13px}
+table.cmpt{table-layout:auto;min-width:100%}
+table.cmpt td{padding:7px 9px;border-top:1px solid var(--line-soft);vertical-align:baseline}
+table.cmpt .ml{color:var(--mute);font-size:var(--s2);white-space:nowrap;width:1%}
+table.cmpt .cp{font-weight:650;font-size:var(--s2);white-space:nowrap}
+table.cmpt .cp .cn{margin-right:6px}
+table.cmpt .cv{text-align:right;font-variant-numeric:tabular-nums;
+  font-size:var(--s2);white-space:nowrap}
+table.cmpt .cv.win{color:var(--act);font-weight:650}
+tr.mrow{cursor:pointer}
+tr.mrow:hover .ml{color:var(--text)}
+tr.mnote td{display:none;font-size:var(--s1);color:var(--mute);line-height:1.6;
+  border-top:0;padding:0 9px 10px;white-space:normal;max-width:560px}
+tr.mrow.open + tr.mnote td{display:table-cell}
+
+@media(max-width:560px){
+  .sel{width:30px}
+  .pick{width:24px;height:24px;font-size:var(--s1)}
+  table.cmpt td{padding:6px 7px}
+  table.cmpt .ml,table.cmpt .cv,table.cmpt .cp{font-size:var(--s1)}
+}
+
+/* The selector column costs the player-name column 30px, and at phone width
+   that column has no 30px to spare. Measured at 390px with the new column and
+   no other change: "Starting Quarterback" broke across SIX lines in a 56px
+   cell, and eight at 360px — the identical failure Phase 3a fixed, walked
+   straight back in by adding a column and not re-measuring.
+   So on phones the VOR column stands down. It is the most expendable thing in
+   this table: the answer is the calls block above, this table is reference,
+   and value over replacement is now a row in the compare tool where it has
+   room to be read. Same reasoning that already hides the team column. */
+@media(max-width:560px){
+  /* PHONE TABLES USE AUTO LAYOUT, AND THAT IS DELIBERATE.
+
+     Adding the compare selector column cost the player-name column 30px, and
+     under `table-layout:fixed` that column had none to spare: measured at
+     390px, "Starting Quarterback" broke across SIX lines in a 59px cell, and
+     ten lines at 320px. The identical failure Phase 3a fixed, walked straight
+     back in by adding a column and not re-measuring.
+
+     Three fixed-layout fixes were measured and all three failed. Hiding the
+     VOR column freed nothing; zeroing the widths of the hidden columns freed
+     nothing; and an explicit `calc(100% - 190px)` on the name column resolved
+     against something other than the table width (116px at 560, 59px at 390,
+     36px at 320 - no consistent basis). Fixed layout was simply not handing
+     the remainder to the one auto column, and guessing at why was costing
+     more than switching algorithms.
+
+     Auto layout gives the name column 149px at 390px and 119px at 360px, with
+     no horizontal scroll down to 320px - better than the ~130px it had BEFORE
+     the selector column existed. The header-class discipline still matters and
+     is still kept, because the laptop layout above is still fixed.
+
+     The VOR column still stands down on phones: the answer is the calls block,
+     this table is reference, and value over replacement is now a row in the
+     compare tool where it has room to be read. */
+  section.block table{table-layout:auto}
+  .nm{width:auto;word-break:break-word}
+  .vor{display:none}
+  .sel{width:26px}
+  .slot{width:44px}
+  .pt{width:66px}
+}

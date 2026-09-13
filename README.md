@@ -163,7 +163,45 @@ The residual risk, raised in audit and worth writing down: within that window a 
 can pair a new module with an old `app.css`. If a deploy ever looks wrong immediately after a push,
 hard-reload (Ctrl+Shift+R) before debugging anything.
 
-## Not wired yet (end of Phase 3a)
+## The compare tool (Phase A)
+
+One compare surface, all positions, replacing the six the old product accumulated. A ranked pool
+of N that collapses to a head-to-head at exactly two, rendered inline on the same page and
+**invisible until you select someone** - tap the scales next to any player in your lineup or on
+your bench.
+
+**The metric list is data, not code.** `METRICS` in `js/compare.js` is an array of descriptors
+(`key`, `label`, `get`, `fmt`, `dir`, `crossPosition`, `axis`, `note`). Nothing in the renderer
+knows the name of a single metric, so Phase B's usage columns and the 2027 draft rows append as
+entries. There is deliberately **no draft-mode code in `js/`** - a branch that cannot be exercised
+for eleven months is how the old product ended up with nine unreachable surfaces.
+
+**The cross-position rule is load-bearing.** A flex decision is "this RB or that WR". FantasyPros
+ECR is published on per-position pages, so an RB12 and a WR12 are not the same claim - any metric
+marked `crossPosition:false` is **dropped**, not greyed, the moment the pool spans positions, and
+the surface says which ones it dropped and why. A number that looks comparable and isn't is worse
+than no number.
+
+**FantasyCalc (`js/fantasycalc.js`) is why this works at all.** It publishes one trade-value scale
+across every position AND parameterises it to league shape. Verified live 2026-09-13: Josh Allen is
+overall **#21** at `numQbs=1&numTeams=14` and **#3** at `numQbs=2&numTeams=8`. Same player, same
+day, same site. That gap is the superflex premium, and Ball Knowers had been shown a 1QB consensus
+rank as if it meant something. The shape is derived from what Sleeper says today, never baked.
+Every row embeds `player.sleeperId`, so the join is an id lookup with no name matching.
+
+**Which axis decides is not a detail.** Two players who could take the same starting slot are a
+start/sit question, and start/sit is judged on projected points - the same axis the lineup solver
+on this page already uses, so the two can never contradict each other. Everything else ranks on
+value over replacement, and says so ("a hold-and-drop read, not a start/sit one"). Getting this
+wrong meant the calls block could say "Start the QB, +8.0" while the compare block eight lines
+below said "the RB by 7.5".
+
+**Rest of season** is one Sleeper call per player, fetched only for players actually put into a
+comparison - a 15-player roster would otherwise be 15 extra calls to answer a question nobody
+asked. It is **re-scored at the league's own rules**, never the vendor's `pts_ppr`, and is cached
+per league because it is a different number in each of them.
+
+## Not wired yet (end of Phase A)
 
 - ~~Kickoff locking~~ **DONE.** See above.
 - ~~Variance thresholds~~ **DONE.** Per-position sigma, measured live from the starter-caliber
@@ -179,6 +217,12 @@ hard-reload (Ctrl+Shift+R) before debugging anything.
 - **The usage layer** (snap share, target share, expected points) is Phase 3b, together with the
   weekly Python build that mirrors what the browser genuinely cannot reach. Those 2026 files do not
   exist until games are played.
-- **Decision memory** currently records lockouts only. The full layer is Phase 5, with waivers
-  and FAAB.
+- ~~One compare tool~~ **DONE.** See above.
+- **Decision memory** currently records lockouts only, in browser storage on one device. The
+  recap is Phase E; the per-device limit is a known and accepted constraint, not an oversight.
+- **The waiver pool** is Phase C - who to claim and why, scoped deliberately to exclude dollar
+  guidance, because nothing free supports a bid number and modelling one would be inventing it.
+- **The day-shaped page** is Phase D. `visible(section, day)` in `js/ui.js` is stubbed always-true
+  and every section shipped from here declares its day rule at birth, so Phase D fills in one
+  function rather than re-wrapping five sections that never had one.
 - **Depth charts** were considered and cut: a depth chart predicts usage, and Phase 3b measures it.

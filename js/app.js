@@ -3,6 +3,8 @@ import { rescore, isFloorOnly, willNotPlay } from "./scoring.js";
 import { startingSlots, optimalLineup, decisions, missedCalls } from "./lineup.js";
 import { rosteredIds, replacementLevels, vor, sigmaTable, threshold } from "./value.js";
 import { consensus, disagreements } from "./market.js";
+import { values as fcalcValues, leagueShape } from "./fantasycalc.js";
+import { restOfSeason } from "./compare.js";
 import * as sched from "./schedule.js";
 import { recordMissed } from "./memory.js";
 import { render, renderError, setLoading } from "./ui.js";
@@ -11,6 +13,10 @@ const state = {
   cfg: null, week: null, season: null, projections: null,
   leagues: {}, active: null, market: null,
   schedule: null,
+  // Compare selection, per league. Kept in state rather than the DOM because
+  // render() rebuilds innerHTML wholesale on every repaint - a kickoff flip at
+  // one o'clock would otherwise wipe a comparison mid-read.
+  selection: {}, ros: new Map(), rosPending: new Set(), fcalc: new Map(),
   // One timestamp for the whole solve. Reading Date.now() separately at each
   // lock check would let a game kick off halfway through a render and produce
   // a lineup that is internally inconsistent.
@@ -49,6 +55,13 @@ async function boot() {
     // already useful and already painted; this arrives late and re-renders.
     // If it never arrives, nothing above it changes.
     consensus().then((m) => { state.market = m; attachMarket(); paint(); });
+
+    // FantasyCalc is fetched PER LEAGUE, because the whole point of it is that
+    // the board is different for each: Josh Allen is overall #3 in an 8-team
+    // superflex and #21 in a 14-team 1QB league. One shared call would hand
+    // one of the two leagues a number that is wrong for it - which is exactly
+    // the defect this layer exists to fix.
+    for (const entry of state.cfg.leagues) attachFcalc(entry.key);
   } catch (err) {
     renderError(err);
   }
@@ -155,6 +168,107 @@ async function loadLeague(entry) {
   };
 }
 
+async function attachFcalc(key) {
+  const L = state.leagues[key];
+  if (!L) return;
+  const shape = leagueShape(L.league);
+  // Held at state level, keyed by shape, so re-attaching after a kickoff
+  // re-solve costs nothing and needs no second fetch.
+  const id = `${shape.numQbs}-${shape.numTeams}-${shape.ppr}`;
+  if (!state.fcalc.has(id)) state.fcalc.set(id, await fcalcValues(shape));
+  attachFcalcFor(key);
+  paint();
+}
+
+function attachFcalcFor(key) {
+  const L = state.leagues[key];
+  if (!L) return;
+  const shape = leagueShape(L.league);
+  const fc = state.fcalc.get(`${shape.numQbs}-${shape.numTeams}-${shape.ppr}`);
+  if (!fc) return;
+  L.fcalc = fc;
+  if (!fc.ok) return;
+  for (const p of L.byId.values()) p.fcalc = fc.byId.get(p.id) || null;
+}
+
+// Which week is this team's bye, according to the schedule we already hold.
+//
+// A SCHEDULE THAT DOES NOT KNOW THE TEAM IS NOT A BYE.
+//
+// teamGame() returns null both for a real bye and for a team code absent from
+// the index, which schedule.js documents twice as a distinction that must
+// never be collapsed. The first version of this function collapsed it anyway:
+// a player whose team code does not join - the exact case unknownTeams()
+// exists to surface - got "bye, this week". Scanning a STALE schedule has the
+// same shape, because a cached CSV missing late weeks reports them as byes.
+// Both now return null, and null renders as no bye rather than a wrong one.
+function confirmedBye(team) {
+  const sc = state.schedule;
+  if (!sc?.ok || sc.stale || !team) return null;
+  if (!sc.byTeam?.has(sched.normTeam(team))) return null;  // join failure, not a bye
+  for (let wk = state.week; wk <= 18; wk++) {
+    if (!sched.teamGame(sc, team, wk)) return wk;
+  }
+  return null;
+}
+
+// Rest-of-season, fetched only for players actually put into a comparison.
+//
+// One request per player, so this is deliberately NOT part of the page load:
+// a 15-player roster would be 15 extra calls to answer a question nobody asked.
+//
+// Cached PER LEAGUE, because the rest-of-season total is re-scored at each
+// league's own rules and is therefore a different number in each of them.
+const rosKey = (leagueKey, id) => `${leagueKey}:${id}`;
+
+async function ensureRos(ids) {
+  // Captured BEFORE the await. Resolving the league inside the callback would
+  // let a league switch mid-flight file one league's answer under the other's
+  // scoring - which matters now that the number is league-scored.
+  const key = state.active;
+  const L = state.leagues[key];
+  if (!L) return;
+  const scoring = L.league.scoring_settings;
+
+  const wanted = ids.filter((id) =>
+    !state.ros.has(rosKey(key, id)) && !state.rosPending.has(rosKey(key, id)));
+
+  if (wanted.length) {
+    wanted.forEach((id) => state.rosPending.add(rosKey(key, id)));
+    await Promise.allSettled(wanted.map(async (id) => {
+      try {
+        const weeks = await sleeper.playerSeason(id, state.season);
+        const team = L.byId.get(id)?.team;
+        state.ros.set(rosKey(key, id),
+          restOfSeason(weeks, state.week, scoring, confirmedBye(team)));
+      } catch (err) {
+        // A player with no season payload is a gap, not a failure. Cache the
+        // null so the surface stops asking on every repaint.
+        state.ros.set(rosKey(key, id), null);
+        console.warn("rest-of-season unavailable for", id, err.message);
+      } finally {
+        state.rosPending.delete(rosKey(key, id));
+      }
+    }));
+  }
+
+  // ALWAYS re-attach, even when every id was already cached. The early return
+  // used to sit above this line, so after a kickoff re-solve rebuilt the player
+  // objects the cache was full, nothing re-attached, and the rest-of-season row
+  // stayed on "Pulling…" forever with no fetch in flight.
+  attachRos();
+  paint();
+}
+
+function attachRos() {
+  for (const [key, L] of Object.entries(state.leagues)) {
+    for (const p of L.byId.values()) {
+      const hit = rosKey(key, p.id);
+      if (state.ros.has(hit)) p.ros = state.ros.get(hit);
+    }
+  }
+}
+
 function attachMarket() {
   if (!state.market?.ok) return;
   for (const L of Object.values(state.leagues)) {
@@ -164,7 +278,19 @@ function attachMarket() {
   }
 }
 
-function paint() { render(state, (key) => { state.active = key; paint(); }); }
+function paint() {
+  render(state, {
+    onSwitch: (key) => { state.active = key; paint(); },
+    onToggle: (id) => {
+      const key = state.active;
+      const sel = state.selection[key] || (state.selection[key] = new Set());
+      sel.has(id) ? sel.delete(id) : sel.add(id);
+      paint();
+      if (sel.size >= 2) ensureRos([...sel]);
+    },
+    onClear: () => { state.selection[state.active] = new Set(); paint(); },
+  });
+}
 
 // Games kick off while the page is sitting open on a Sunday afternoon. A page
 // loaded at 12:58 would otherwise still be offering a call that stopped being
@@ -203,7 +329,14 @@ function watchKickoffs() {
     const settled = await Promise.allSettled(state.cfg.leagues.map(loadLeague));
     const failed = settled.filter((r) => r.status === "rejected");
     try {
+      // loadLeague() rebuilds state.leagues wholesale - new byId, new player
+      // objects - so EVERY enrichment layer has to be put back, not just the
+      // market one. Miss one and it vanishes from the page at the first
+      // kickoff of the afternoon and never returns, which is when this tool
+      // is most in use.
       attachMarket();
+      for (const e of state.cfg.leagues) attachFcalcFor(e.key);
+      attachRos();
       paint();
       previous = lockKey();
     } finally {
