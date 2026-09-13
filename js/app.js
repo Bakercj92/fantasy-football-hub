@@ -5,8 +5,10 @@ import { rosteredIds, replacementLevels, vor, sigmaTable, threshold } from "./va
 import { consensus, disagreements } from "./market.js";
 import { values as fcalcValues, leagueShape } from "./fantasycalc.js";
 import { restOfSeason } from "./compare.js";
+import * as usage from "./usage.js";
+import { waiverBoard } from "./waivers.js";
 import * as sched from "./schedule.js";
-import { recordMissed } from "./memory.js";
+import { recordMissed, recordLineup, recap } from "./memory.js";
 import { render, renderError, setLoading } from "./ui.js";
 
 const state = {
@@ -17,6 +19,7 @@ const state = {
   // render() rebuilds innerHTML wholesale on every repaint - a kickoff flip at
   // one o'clock would otherwise wipe a comparison mid-read.
   selection: {}, ros: new Map(), rosPending: new Set(), fcalc: new Map(),
+  usage: null, usageFresh: null, trending: new Map(),
   // One timestamp for the whole solve. Reading Date.now() separately at each
   // lock check would let a game kick off halfway through a render and produce
   // a lineup that is internally inconsistent.
@@ -37,16 +40,24 @@ async function boot() {
     // The schedule is NOT a late enrichment like the market layer. Locking is
     // a correctness feature, so it has to be in hand before the first solve -
     // a lineup painted without it can show a call that is already impossible.
-    const [projections, schedule] = await Promise.all([
+    // Usage rides along here rather than arriving late like the market layers,
+    // because it is a local file in this repo - there is no network round trip
+    // to hide behind a progressive render.
+    const [projections, schedule, used] = await Promise.all([
       sleeper.weekProjections(state.season, state.week),
       sched.load(state.season, { now: state.now }),
+      usage.load(state.season),
     ]);
     state.projections = projections;
     state.schedule = schedule;
+    state.usage = used;
 
     setLoading("Reading your leagues");
     await Promise.all(state.cfg.leagues.map(loadLeague));
 
+    attachUsage();
+    buildWaivers();
+    buildRecap();
     state.active = state.cfg.leagues[0].key;
     paint();
     watchKickoffs();
@@ -62,6 +73,24 @@ async function boot() {
     // one of the two leagues a number that is wrong for it - which is exactly
     // the defect this layer exists to fix.
     for (const entry of state.cfg.leagues) attachFcalc(entry.key);
+
+    // Is the mirror behind upstream? api.github.com allows cross-origin reads
+    // even though the asset bytes it describes do not, so the page can learn
+    // that nflverse has moved without being able to fetch what moved. Late,
+    // optional, and silent when it cannot tell.
+    usage.checkFreshness(state.usage).then((f) => {
+      if (f) { state.usageFresh = f; paint(); }
+    });
+
+    // Sleeper's add counts: the free urgency signal. Not a projection and not
+    // a recommendation - it is what the rest of the world is doing, which
+    // matters for a waiver claim in a way it never matters for a lineup.
+    sleeper.trending(48, 60)
+      .then((rows) => {
+        state.trending = new Map((rows || []).map((r) => [String(r.player_id), r.count]));
+        buildWaivers(); paint();
+      })
+      .catch((err) => console.warn("trending unavailable:", err.message));
   } catch (err) {
     renderError(err);
   }
@@ -147,6 +176,27 @@ async function loadLeague(entry) {
     recordMissed({ leagueKey: entry.key, season: state.season, week: state.week, missed, at: state.now });
   }
 
+  // What you are running versus what the tool would run. Written every load
+  // and overwritten within the week, so the last thing recorded before kickoff
+  // is what gets graded on Tuesday. Silent when the two agree - a log full of
+  // "no difference" teaches nothing.
+  recordLineup({
+    leagueKey: entry.key, season: state.season, week: state.week,
+    // optimalLineup() returns [{slot, player}], NOT players. The first version
+    // read `.id` off the wrapper, so every entry was undefined, `suggested`
+    // came out empty, and the recap silently dropped every lineup row it ever
+    // graded - the headline feature of this phase, a no-op. decisions() two
+    // lines above has always read `s.player?.id`; this did not.
+    //
+    // Both lists drop Sleeper's "0" empty-slot marker so the two are
+    // comparable: otherwise a single empty seat makes agreement unreachable
+    // and every week logs as a disagreement.
+    started: starters.map(String).filter((id) => id && id !== "0"),
+    suggested: optimal.map((s) => s?.player?.id).filter(Boolean).map(String),
+    threshold: calls.threshold,
+    at: state.now,
+  });
+
   // A team code the schedule does not know is a join failure, not a bye, and
   // it must not be allowed to look like one.
   const unknown = sched.unknownTeams(state.schedule, roster.map((p) => p.team));
@@ -158,11 +208,21 @@ async function loadLeague(entry) {
 
   state.leagues[entry.key] = {
     entry, league, roster, byId, slots, optimal, calls, priced,
+    // The rostered set is kept, not just used and dropped: the waiver layer's
+    // entire question is "who is NOT in here", and recomputing it from the
+    // rosters would mean a second live read of something already in hand.
+    rostered,
     levels, sigma, freeBest,
     frozen, missed, unknown,
     lockedCount: roster.filter((p) => p.locked).length,
     starters,
-    faabLeft: (league.settings?.waiver_budget ?? 0) - (mine.settings?.waiver_budget_used ?? 0),
+    // NULL, not zero, when this league has no FAAB budget at all. A league
+    // that drafts waiver priority instead of bidding has no budget field, and
+    // "$0 left" stated as a measurement is a fabrication - one line above the
+    // sentence promising that bid figures are deliberately absent, not missing.
+    faabLeft: league.settings?.waiver_budget == null
+      ? null
+      : league.settings.waiver_budget - (mine.settings?.waiver_budget_used ?? 0),
     teams: league.total_rosters,
     rosteredCount: rostered.size,
   };
@@ -269,6 +329,35 @@ function attachRos() {
   }
 }
 
+// The Tuesday recap. Graded only against weeks nflverse has actually
+// published, never against the calendar.
+function buildRecap() {
+  for (const [key, L] of Object.entries(state.leagues)) {
+    L.recap = recap({
+      leagueKey: key, season: state.season, currentWeek: state.week,
+      usage: state.usage, scoring: L.league.scoring_settings, rescore,
+    });
+  }
+}
+
+function buildWaivers() {
+  for (const L of Object.values(state.leagues)) {
+    L.waivers = waiverBoard(L, {
+      trending: state.trending,
+      // So "his last three games" can mean recently rather than ever.
+      throughWeek: state.usage?.throughWeek ?? null,
+    });
+  }
+}
+
+function attachUsage() {
+  if (!state.usage?.ok) return;
+  for (const L of Object.values(state.leagues)) {
+    for (const p of L.byId.values()) p.usage = state.usage.byId.get(p.id) || null;
+    for (const p of L.priced.values()) p.usage = state.usage.byId.get(p.id) || null;
+  }
+}
+
 function attachMarket() {
   if (!state.market?.ok) return;
   for (const L of Object.values(state.leagues)) {
@@ -335,8 +424,11 @@ function watchKickoffs() {
       // kickoff of the afternoon and never returns, which is when this tool
       // is most in use.
       attachMarket();
+      attachUsage();
       for (const e of state.cfg.leagues) attachFcalcFor(e.key);
       attachRos();
+      buildWaivers();
+      buildRecap();
       paint();
       previous = lockKey();
     } finally {

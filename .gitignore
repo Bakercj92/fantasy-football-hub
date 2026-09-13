@@ -21,3 +21,6 @@ _to_delete/
 # removed - at a public URL.
 *.bak-*
 *.bak
+
+# Working backups, any suffix shape (.bak, .bak-DATE, .bak2-DATE).
+*.bak*

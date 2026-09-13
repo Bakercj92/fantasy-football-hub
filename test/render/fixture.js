@@ -77,10 +77,21 @@ H.qb1 = mk("QB", "CIN", 21.5, { first: "Starting", last: "Quarterback" });
 H.qb2 = mk("QB", "MIN", 19.2, { first: "Second", last: "Quarterback" });
 H.k1  = mk("K",  "HOU", 8.4,  { first: "The", last: "Kicker" });
 
+// A rostered id that is absent from the projections feed entirely: the app
+// builds a real entry for him with pts:null and a working selector, so the
+// compare tool must refuse to invent a gap rather than treating null as zero.
+H.noProjection = "999999";
 const myPlayers = [...Object.values(H), "KC"];
-const starters14 = [H.qb1, H.rbValue, H.out, H.wrPoints, H.lockedBadStarter, H.tieA,
-                    H.bogus, H.k1, "KC"];
-const starters8  = [H.qb1, H.rbValue, H.wrPoints, H.wrA, H.tieA, H.ram, H.qb2, H.k1, "KC"];
+// Aligned to LEAGUES[].roster_positions, position by position. An earlier
+// version was one short and slid a defense into the kicker slot, which made
+// the wire offer four kickers "over KC" - a fixture bug that exposed a real
+// one. "0" is how Sleeper marks a slot genuinely left empty.
+// Joop:  QB RB RB WR WR WR TE FLEX K DEF
+const starters14 = [H.qb1, H.rbValue, H.out, H.wrPoints, H.lockedBadStarter, H.ram,
+                    H.tieA, H.bogus, H.k1, "KC"];
+// BKU:   QB RB RB WR WR TE FLEX SUPER_FLEX K DEF
+const starters8  = [H.qb1, H.rbValue, H.lockedGoodBench, H.wrPoints, H.wrA, H.tieA,
+                    "0", H.qb2, H.k1, "KC"];
 
 const SCORING = { rec: 1, pass_yd: 0.04, pass_td: 4, rush_yd: 0.1, rush_td: 6,
                   rec_yd: 0.1, rec_td: 6, fgm: 3, xpm: 1, sack: 1, pts_allow: 0, def_td: 6 };
@@ -148,13 +159,86 @@ function fcalc(numQbs) {
 
 // Season-long weeks for the rest-of-season call. Week 7 is a bye (null stats),
 // which the app must NOT report as a bye unless the schedule confirms it.
+// RAW stats, never a vendor total. The first version of this fixture served
+// pts_ppr, which encoded the same wrong assumption the code had - so no
+// scenario could have caught the app summing the vendor's number. A fixture
+// that shares the code's assumptions cannot audit them.
 function seasonWeeks(id) {
   const out = {};
+  const seed = (Number(id) || 7) % 9;
   for (let w = 1; w <= 18; w++) {
-    out[w] = w === 7 ? { stats: {} } : { stats: { pts_ppr: 8 + ((Number(id) || 7) % 9) + (w % 4) } };
+    out[w] = w === 7
+      ? { stats: {} }                                  // bye: no keys at all
+      : { stats: { rush_yd: (60 + seed * 6 + (w % 4) * 10), rec: 2, rec_yd: 18, pass_td: 0 } };
   }
   return out;
 }
 
+// --- the usage mirror ------------------------------------------------------
+//
+// Keyed to THIS fixture's player ids so the whole chain can be exercised:
+// snap share and touches into the compare tool, usage trends into the waiver
+// risers, and real per-week actuals into the Tuesday recap.
+//
+// Deliberately uneven. A player with a null snap row in one week proves
+// missing-is-not-zero survives the average; a free agent whose last three
+// games jump proves the riser gate fires; another whose jump comes off a tiny
+// base proves it does not.
+const COLS = ["wk","off_pct","tgt","rec","rec_yd","tgt_share","ay_share","wopr","car","rush_yd","att","pass_yd"];
+
+function usagePayload({ throughWeek = 3, generatedAt = "2026-09-15T09:00:00Z" } = {}) {
+  const p = {};
+  const put = (id, pos, tm, weeks, actuals) => { p[id] = { pos, tm, w: weeks, a: actuals || {} }; };
+  const wk = (n, off, tgt, car, share) => [n, off, tgt, Math.round(tgt * 0.65), tgt * 11, share, null, null, car, car * 4, 0, 0];
+
+  // Rostered players, so the compare tool has usage columns to show.
+  put(H.rbValue, "RB", "KC",
+      [wk(1,0.62,3,14,0.08), wk(2,null,4,16,0.09), wk(3,0.71,2,18,0.06)],
+      { "1":{rush_yd:64,rec:2,rec_yd:14}, "2":{rush_yd:71,rec:3,rec_yd:22,rush_td:1}, "3":{rush_yd:88,rec:1,rec_yd:6} });
+  put(H.wrPoints, "WR", "BUF",
+      [wk(1,0.88,9,0,0.27), wk(2,0.91,11,0,0.31), wk(3,0.86,8,0,0.24)],
+      { "1":{rec:6,rec_yd:81}, "2":{rec:8,rec_yd:112,rec_td:1}, "3":{rec:5,rec_yd:54} });
+  put(H.wrA, "WR", "SF",
+      [wk(1,0.74,6,0,0.18), wk(2,0.77,7,0,0.20), wk(3,0.79,6,0,0.19)],
+      { "1":{rec:4,rec_yd:47}, "2":{rec:5,rec_yd:63}, "3":{rec:4,rec_yd:38} });
+  put(H.wrB, "WR", "DAL",
+      [wk(1,0.55,4,0,0.12), wk(2,0.58,5,0,0.14), wk(3,0.51,3,0,0.10)],
+      { "1":{rec:3,rec_yd:31}, "2":{rec:4,rec_yd:52}, "3":{rec:2,rec_yd:19} });
+  put(H.qb1, "QB", "CIN",
+      [[1,1,0,0,0,null,null,null,3,12,34,268],[2,1,0,0,0,null,null,null,2,5,31,240],[3,1,0,0,0,null,null,null,4,19,38,312]],
+      { "1":{pass_yd:268,pass_td:2,rush_yd:12}, "2":{pass_yd:240,pass_td:1,pass_int:1,rush_yd:5}, "3":{pass_yd:312,pass_td:3,rush_yd:19} });
+
+  // FREE AGENTS. `RISER` climbs hard off a real base and must surface;
+  // `TINY` triples a microscopic base and must not.
+  // Genuinely UNROSTERED. rostersFor() hands the first 8 x (teams-1) of the
+  // spare pool to the other managers, so a player picked off the front of that
+  // pool is somebody else's and can never show up on the wire. Take from the
+  // tail, the same way the app will see it.
+  const taken = new Set(myPlayers);
+  const spare = universe.map((u) => u.player_id).filter((x) => !taken.has(x));
+  const free = spare.slice(8 * 13);                    // past the 14-team league's share
+  const freeAt = (pos, from) => (from.find((id) =>
+    universe.find((u) => u.player_id === id)?.player?.position === pos));
+  RISER = freeAt("WR", free);
+  TINY  = freeAt("RB", free) || freeAt("TE", free);
+  // Flat for four weeks, then the starter ahead of him goes down. Season
+  // average stays low, the last three are a different player entirely - which
+  // is the whole reason the gate is proportional to the season, not absolute.
+  put(RISER, "WR", "MIN",
+      [wk(1,0.22,1,0,0.04), wk(2,0.19,2,0,0.05), wk(3,0.24,1,0,0.04),
+       wk(4,0.71,8,0,0.24), wk(5,0.79,10,0,0.28), wk(6,0.83,9,0,0.26)],
+      {});
+  if (TINY) put(TINY, "RB", "ATL",
+      [wk(1,0.03,0,1,0.01), wk(2,0.05,0,2,0.01), wk(3,0.11,1,3,0.02),
+       wk(4,0.04,0,1,0.01), wk(5,0.06,0,2,0.01), wk(6,0.12,1,3,0.02)], {});
+
+  return { season: 2026, through_week: throughWeek, weeks: [1,2,3],
+           generated_at: generatedAt, source_updated_at: null,
+           cols: COLS, act_keys: ["rec","rec_yd","rush_yd","pass_yd","pass_td","pass_int","rush_td","rec_td"],
+           p };
+}
+let RISER = null, TINY = null;
+
 module.exports = { SEASON, WEEK, H, universe, LEAGUES, rostersFor, fcalc,
-                   seasonWeeks, starters14, starters8, myPlayers };
+                   seasonWeeks, starters14, starters8, myPlayers,
+                   usagePayload, riser: () => RISER, tiny: () => TINY };

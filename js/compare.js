@@ -31,6 +31,7 @@ import { threshold } from "./value.js";
 import { rescore } from "./scoring.js";
 import { canFill } from "./lineup.js";
 
+const pct = (v) => (v === null ? "—" : Math.round(v * 100) + "%");
 const n = (v) => (typeof v === "number" && Number.isFinite(v) ? v : null);
 const one = (v, d = 1) => (v === null ? null : Math.round(v * 10 ** d) / 10 ** d);
 
@@ -64,6 +65,62 @@ export const METRICS = [
     note: "Sleeper's projection re-scored at this league's own rules. " +
           "Comparable as raw points, but 12 points from a quarterback and 12 from a " +
           "tight end are worth very different things — that is what the row above is for.",
+  },
+  {
+    key: "snapPct", label: "Snap share", dir: "high",
+    crossPosition: true, axis: false,
+    get: (p) => n(p.usage?.snapPct),
+    fmt: (v, p) => {
+      const r = p.usage?.snapPctRecent;
+      return pct(v) + (typeof r === "number" && p.usage.games > p.usage.gamesRecent
+        ? ` · ${pct(r)} L${p.usage.gamesRecent}` : "");
+    },
+    note: "Share of his team's offensive snaps, measured from what actually happened — " +
+          "not projected. The second figure is the last three games, because a player " +
+          "on the way up and a player on the way out can share a season average. " +
+          "Snap share is the closest thing to a coach telling you what he thinks.",
+  },
+  {
+    key: "oppPerGame", label: "Opportunities / gm", dir: "high",
+    crossPosition: true, axis: false,
+    get: (p) => (p.pos === "QB" ? null : n(p.usage?.oppPerGame)),
+    fmt: (v, p) => {
+      const r = p.usage?.oppPerGameRecent;
+      return one(v, 1) + (typeof r === "number" && p.usage.games > p.usage.gamesRecent
+        ? ` · ${one(r, 1)} L${p.usage.gamesRecent}` : "");
+    },
+    note: "Carries plus targets per game — the touches a coach actually hands out. " +
+          "Efficiency swings wildly week to week; opportunity is the part that persists, " +
+          "which is why it belongs above every projection on this list. " +
+          "Blank for quarterbacks, where it would be a scrap of rushing attempts next to " +
+          "forty pass attempts and would mean nothing.",
+  },
+  {
+    key: "tgtPerGame", label: "Targets / gm", dir: "high",
+    crossPosition: true, axis: false,
+    get: (p) => (p.pos === "QB" ? null : n(p.usage?.tgtPerGame)),
+    fmt: (v, p) => {
+      const r = p.usage?.tgtPerGameRecent;
+      return one(v, 1) + (typeof r === "number" && p.usage.games > p.usage.gamesRecent
+        ? ` · ${one(r, 1)} L${p.usage.gamesRecent}` : "") +
+        (p.usage?.tgtTotal ? ` (${p.usage.tgtTotal} tot)` : "");
+    },
+    note: "Targets per game, with the season total in brackets. A target is worth roughly " +
+          "the same whoever throws it, so this travels across teams and offences better " +
+          "than yards do.",
+  },
+  {
+    key: "tgtShare", label: "Target share", dir: "high",
+    crossPosition: true, axis: false,
+    get: (p) => (p.pos === "QB" ? null : n(p.usage?.tgtShare)),
+    fmt: (v, p) => {
+      const r = p.usage?.tgtShareRecent;
+      return pct(v) + (typeof r === "number" && p.usage.games > p.usage.gamesRecent
+        ? ` · ${pct(r)} L${p.usage.gamesRecent}` : "");
+    },
+    note: "His share of his team's targets. Targets per game rewards a player on a pass-happy " +
+          "team; share tells you how central he is to the offence he is actually in, which is " +
+          "what survives a change of pace or game script.",
   },
   {
     key: "mktValue", label: "Market value", dir: "high",

@@ -253,3 +253,33 @@ tr.mrow.open + tr.mnote td{display:table-cell}
   .slot{width:44px}
   .pt{width:66px}
 }
+
+/* ---------------------------------------------------------------------------
+   The day-shaped page, the wire, and the recap.
+   --------------------------------------------------------------------------- */
+
+/* One quiet line saying what today is for. It is the only thing on the page
+   that announces the day layer exists; everything else just reorders. */
+.daynote{font-size:var(--s1);color:var(--dim);margin:-8px 0 16px;letter-spacing:.01em}
+
+/* The wire borrows the decision block's weight because a claim IS a decision.
+   It reads green rather than amber: a waiver is an opportunity, where the
+   calls block is a correction, and the two must not look interchangeable. */
+.calls.waivers{border-color:var(--ok);background:transparent}
+.calls.waivers .hd{color:var(--text)}
+.calls.waivers .tot{color:var(--ok)}
+.calls.waivers .delta{color:var(--ok)}
+.subhd{font-size:var(--s1);color:var(--dim);text-transform:uppercase;letter-spacing:.06em;
+  font-weight:600;margin:14px 0 2px;padding-top:11px;border-top:1px solid rgba(255,255,255,.09)}
+.subhd + .call{border-top:0;padding-top:6px}
+
+/* The recap is reference weight, never decision weight. It grades a week that
+   is already over, and nothing in it is actionable - dressing it like the
+   calls block would make last week compete with this week's lineup. */
+.calls.recap{border-color:var(--line-soft);background:var(--surface)}
+.calls.recap .hd{color:var(--mute);font-size:var(--s3)}
+.calls.recap .tot{color:var(--mute)}
+.calls.recap .delta{color:var(--warn)}
+.calls.recap .delta.good{color:var(--ok)}
+
+.mkt{margin-top:6px;color:var(--mute)}

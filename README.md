@@ -201,7 +201,82 @@ comparison - a 15-player roster would otherwise be 15 extra calls to answer a qu
 asked. It is **re-scored at the league's own rules**, never the vendor's `pts_ppr`, and is cached
 per league because it is a different number in each of them.
 
-## Not wired yet (end of Phase A)
+## The usage layer, and the one build step (Phase B)
+
+**Everything on this page is fetched live in your browser except one file.** nflverse ships weekly
+stats and snap counts as GitHub *release assets*, which redirect to a host that sends no CORS
+header. Re-verified from the live site on 2026-09-13: the `api.github.com` metadata call returns
+200 in the browser and the asset bytes throw. So `build/usage.py` mirrors and trims them into
+`data/usage_2026.json`.
+
+The disease the rebuild cured was never "a build step" — it was **a derived copy of the source
+going stale while tests stayed green**, three times. A mirror of someone else's dataset is a
+different animal, but only if it cannot lie about its own age. So:
+
+- it writes **only** to `data/`. Nothing under `js/`, `index.html` or `app.css` is ever generated.
+- it **trims**: four positions, twelve columns. A full 2025 season is 537 KB where the raw pair is
+  ~11 MB by December.
+- it **stamps** `through_week`, `generated_at`, and per-source status. The footer says "usage
+  through week N", and says so separately for stats and snaps — a fresh overall stamp over a file
+  whose snap half never arrived would otherwise claim to be current.
+- `checkFreshness()` asks `api.github.com` — which *is* browser-readable — when upstream last
+  changed, and the page says when the mirror is behind. **Silently stale becomes visibly stale**,
+  which is the whole difference between a mirror and a liability.
+- **no test asserts against its contents.** Tests assert on the loader.
+
+The join is done once, at build time: `stats_player_week` is keyed by GSIS id and `snap_counts` by
+PFR id, and neither is a Sleeper id. Resolving both here means the browser needs no second
+crosswalk. Actuals are translated into **Sleeper's** stat vocabulary at build time too, so
+`rescore()` grades a real week with the exact same function and settings that priced the projection.
+
+**Missing is not zero, everywhere.** A player with no snap row keeps a blank. An unmeasured week is
+skipped by the averages rather than entering as a zero-touch game — a bug that cost a third of a
+player's workload and manufactured fake usage trends before it was caught.
+
+## The wire (Phase C)
+
+Two questions, and silence when neither has an answer. There is deliberately **no browsable
+free-agent list** — Sleeper has one and it is better.
+
+- **Upgrades** — is anyone free better *this week* than someone you are starting, at a seat he could
+  actually fill? Measured against the same threshold the lineup solver uses, so a claim this block
+  recommends is one the lineup block will then act on. One claim per seat, never four near-identical
+  candidates for the same slot. Locked starters are never offered as seats.
+- **Risers** — is anyone free trending sharply up in usage that persists, regardless of this week's
+  projection? Proportional to his own season average, from a real base, and anchored to the current
+  week so a player who has not appeared in six weeks cannot read as "up over his last three games".
+
+**No FAAB dollar figure, anywhere, deliberately.** Nothing free supports one; a number we modelled
+would look like a number we measured. Your remaining balance is shown and labelled as a balance.
+Kickers and defenses are never recommended — their totals are floors here and their week-to-week
+ranking is noise.
+
+## The day-shaped page (Phase D)
+
+A fantasy week has five different moments; the old tool had one view for all of them.
+`PLANS` in `js/ui.js` maps each weekday to an ordered list of sections. It is an **order**, not a
+set of switches — nearly every block already hides itself when it has nothing to say, so the day's
+job is deciding what leads. Only the recap is genuinely day-gated (Tuesday and Wednesday), because
+a scoreboard of last week's mistakes while you are setting this week's lineup is a distraction.
+
+Every day carries `compare` and `locked`, and that is not an oversight: the compare selector renders
+on every row regardless of day, so a plan without it strands the selection with no way out.
+
+## Decision memory and the recap (Phase E)
+
+What you ran versus what the tool suggested, written every load and overwritten within the week, so
+the last thing recorded before kickoff is what gets graded. Silent when the two agree — and taking
+the advice *clears* the earlier disagreement, so you are never graded on a lineup you fixed.
+
+The recap grades only weeks that have **finished and been published**, scored from real results at
+this league's own rules. Calls and lockouts are totalled **separately**: a lockout is not a decision
+you got wrong. A week that is only partly mirrored is shown, labelled, and left out of the totals.
+
+**This log lives in one browser on one device.** A lineup set on the phone is not in it. That is a
+known and accepted limit, chosen over building a shared store, and the page says so rather than
+implying it saw everything.
+
+## Not wired yet (end of Phase E)
 
 - ~~Kickoff locking~~ **DONE.** See above.
 - ~~Variance thresholds~~ **DONE.** Per-position sigma, measured live from the starter-caliber
@@ -217,12 +292,17 @@ per league because it is a different number in each of them.
 - **The usage layer** (snap share, target share, expected points) is Phase 3b, together with the
   weekly Python build that mirrors what the browser genuinely cannot reach. Those 2026 files do not
   exist until games are played.
-- ~~One compare tool~~ **DONE.** See above.
-- **Decision memory** currently records lockouts only, in browser storage on one device. The
-  recap is Phase E; the per-device limit is a known and accepted constraint, not an oversight.
-- **The waiver pool** is Phase C - who to claim and why, scoped deliberately to exclude dollar
-  guidance, because nothing free supports a bid number and modelling one would be inventing it.
-- **The day-shaped page** is Phase D. `visible(section, day)` in `js/ui.js` is stubbed always-true
-  and every section shipped from here declares its day rule at birth, so Phase D fills in one
-  function rather than re-wrapping five sections that never had one.
+- ~~One compare tool~~ **DONE.**
+- ~~The usage layer~~ **DONE** (Phase B).
+- ~~The waiver pool~~ **DONE** (Phase C).
+- ~~The day-shaped page~~ **DONE** (Phase D).
+- ~~Decision memory and the recap~~ **DONE** (Phase E).
+- **A matchup layer.** Defence-adjusted expectations are not built. Vegas appears only as context
+  behind a call, and streaming a defence off the wire is deliberately not recommended without it.
+- **Injury designations** come from Sleeper and lag the wire by hours; nflverse's 2026 injury file
+  is 30 rows and its upstream ended after 2024.
+- **The nudge.** A scheduled task can reach nflverse and api.github.com but has no route to Sleeper,
+  so it can say "new usage data has published, ask Claude to refresh" and can never say anything
+  about your roster.
+- **A shared decision store.** Would fix the one-device limit above. Declined for now.
 - **Depth charts** were considered and cut: a depth chart predicts usage, and Phase 3b measures it.

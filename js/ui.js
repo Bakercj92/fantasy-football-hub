@@ -57,30 +57,89 @@ const chip = (s) => {
   return `<span class="chip ${cls}" title="${esc(s)}">${esc(label)}</span>`;
 };
 
-// WHICH SECTIONS ARE ALLOWED TO SPEAK TODAY.
+// THE DAY-SHAPED PAGE.
 //
-// Phase D turns this into the real day-shaped page: a Tuesday view, a Thursday
-// view, a Sunday view, each promoting and demoting what is already built. It
-// is stubbed always-true now ON PURPOSE, so every section shipped before then
-// declares its day rule at birth and Phase D fills in one function instead of
-// re-wrapping five sections that never had one.
+// A fantasy week has five different moments and the old tool had one view for
+// all of them. Chris asked for the page to be genuinely different depending on
+// when he opens it, and this is where that lives.
 //
-// The successor to the old "a new surface must replace a named old one" rule,
-// which fires on none of the rebuild phases because there are no old surfaces
-// left in this app to retire: A NEW SECTION MUST BE INVISIBLE BY DEFAULT AND
-// MUST NAME THE CONDITION UNDER WHICH IT APPEARS. The condition for `compare`
-// is below - two or more players selected. There is no way to reach it by
-// accident and nothing to dismiss when you are not using it.
-export function visible(_section, _day = new Date().getDay()) {
-  return true;
+// The plan is an ORDER, not a set of switches. Almost every block on this page
+// already hides itself when it has nothing to say - that is the exception-based
+// rule the rebuild is built on - so the day's job is to decide what sits at the
+// top, not to suppress things arbitrarily. Two blocks are genuinely day-gated,
+// and both for a reason you can state in a sentence:
+//
+//   recap    - Tuesday and Wednesday only. It grades a week that has finished
+//              and been published. On Sunday there is nothing to grade, and a
+//              scoreboard of last week's mistakes while you are setting this
+//              week's lineup is a distraction, not information.
+//   waivers  - every day, because a free agent is claimable every day, but it
+//              rides at the top on Tuesday and Wednesday when claims process.
+//
+// This is also the standing guardrail for everything built from here on. The
+// old rule - "a new surface must replace a named old one" - fires on none of
+// the rebuild phases, because no old surfaces are left to retire. Its
+// successor: A NEW SECTION MUST BE INVISIBLE BY DEFAULT AND MUST NAME THE
+// CONDITION UNDER WHICH IT APPEARS. Every section below declares one.
+// EVERY PLAN CONTAINS `compare` AND `locked`, AND THAT IS NOT AN OVERSIGHT.
+//
+// Monday's plan originally omitted compare. The selector button renders on
+// every row regardless, so tapping it on a Monday marked the row, grew the
+// selection, fired a Sleeper request per player - and painted nothing, with no
+// clear button to escape. A control that is always present must always have
+// somewhere to land.
+//
+// `locked` was Sunday and Monday only, which made a Thursday-night lockout
+// invisible until the following Sunday. Both blocks hide themselves when they
+// have nothing to say, so carrying them every day costs exactly nothing.
+const PLANS = {
+  0: ["sched", "calls", "compare", "locked", "lineup", "bench", "waivers", "market"], // Sunday
+  1: ["sched", "calls", "locked", "compare", "lineup", "bench", "waivers", "market"], // Monday
+  2: ["sched", "recap", "waivers", "calls", "compare", "locked", "lineup", "bench", "market"],
+  3: ["sched", "waivers", "recap", "calls", "compare", "locked", "lineup", "bench", "market"],
+  4: ["sched", "calls", "compare", "locked", "lineup", "bench", "waivers", "market"], // Thursday
+  5: ["sched", "calls", "compare", "locked", "lineup", "bench", "waivers", "market"], // Friday
+  6: ["sched", "calls", "compare", "locked", "lineup", "bench", "waivers", "market"], // Saturday
+};
+
+const DAY_NOTE = {
+  0: "Sunday — lineup first, and anything already locked.",
+  1: "Monday — what ran, and what is still claimable.",
+  2: "Tuesday — last week graded, then the wire.",
+  3: "Wednesday — claims process today.",
+  4: "Thursday — check anyone in tonight's game before kickoff.",
+  5: "Friday — quiet. Lineup and the wire.",
+  6: "Saturday — quiet. Lineup and the wire.",
+};
+
+export const dayPlan = (day = new Date().getDay()) => PLANS[day] || PLANS[6];
+export const dayNote = (day = new Date().getDay()) => DAY_NOTE[day] || "";
+export function visible(section, day = new Date().getDay()) {
+  return dayPlan(day).includes(section);
 }
 
 export function render(state, handlers) {
   const { onSwitch, onToggle, onClear } = handlers;
   const L = state.leagues[state.active];
+  const day = state.day ?? new Date().getDay();
+
   const tabs = state.cfg.leagues.map((e) =>
     `<button class="tab${e.key === state.active ? " on" : ""}" data-k="${esc(e.key)}">${esc(e.name)}</button>`
   ).join("");
+
+  // Every section is a function of (league, state). The day decides the order
+  // and nothing else knows what day it is.
+  const SECTIONS = {
+    sched:   () => scheduleWarning(state, L),
+    calls:   () => callsBlock(L),
+    compare: () => compareBlock(L, state),
+    recap:   () => recapBlock(L, state),
+    waivers: () => waiverBlock(L, state),
+    locked:  () => lockedBlock(L),
+    lineup:  () => lineupTable(L, state),
+    bench:   () => benchTable(L, state),
+    market:  () => marketBlock(L, state),
+  };
 
   $("#app").innerHTML = `
     <header>
@@ -88,13 +147,8 @@ export function render(state, handlers) {
       <div class="wk">Week ${state.week} · ${esc(state.season)}</div>
     </header>
     <nav class="tabs">${tabs}</nav>
-    ${scheduleWarning(state, L)}
-    ${callsBlock(L)}
-    ${visible("compare") ? compareBlock(L, state) : ""}
-    ${lockedBlock(L)}
-    ${lineupTable(L, state)}
-    ${benchTable(L, state)}
-    ${marketBlock(L, state)}
+    <div class="daynote">${esc(dayNote(day))}</div>
+    ${dayPlan(day).map((key) => (SECTIONS[key] ? SECTIONS[key]() : "")).join("")}
     ${footer(L, state)}`;
 
   document.querySelectorAll(".tab").forEach((b) =>
@@ -112,18 +166,148 @@ export function render(state, handlers) {
 }
 
 // ---------------------------------------------------------------------------
-// The compare surface.
-//
-// Invisible until you select a player, which is the appearance condition this
-// section declares (see visible() above). Metrics as rows, players as columns,
-// because the metric list is data and grows - Phase B appends usage, 2027
-// appends draft rows - and a table that grows downward survives that where one
-// that grows sideways does not.
-//
-// The tool decides and the arithmetic sits behind a tap: the verdict is one
-// line, and every metric row opens to say what the number means and why it is
-// or is not allowed to be compared here.
+// Waivers. Appearance condition: at least one free agent either beats a
+// current starter this week, or is trending sharply up in real usage.
+// Otherwise this block does not exist. There is no browsable free-agent list
+// here on purpose - Sleeper already has one, and a better one.
 // ---------------------------------------------------------------------------
+function waiverBlock(L, state) {
+  const w = L.waivers;
+  if (!w?.any) return "";
+
+  const up = w.upgrades.map((p) => {
+    const over = p.over
+      ? `over <b>${esc(p.over.name)}</b> in your ${esc(p.slot)}`
+      : `into your empty ${esc(p.slot)}`;
+    const adds = state.trending?.get(p.id);
+    return `<div class="call">
+      <div class="line"><b>Claim ${esc(p.name)}</b>
+        <span class="over">${over}</span>
+        <span class="delta">${sgn(p.gap)}</span></div>
+      <div class="why">
+        ${esc(p.name)} projects <b>${n1(p.pts)}</b> at this league's scoring${
+          p.opponent ? ` vs ${esc(p.opponent)}` : ""}${
+          typeof p.vor === "number" ? ` — <b>${sgn(p.vor)}</b> over the best free ${esc(p.pos)}` : ""}.
+        ${p.over ? `${esc(p.over.name)} projects <b>${n1(p.over.pts)}</b>.` : ""}
+        The gap clears the ${n1(p.gate)}-point threshold this league's own numbers set,
+        which is the same gate the start/sit calls use — so if you claim him, the lineup
+        block above will tell you to start him.
+        ${usagePhrase(p)}
+        ${typeof adds === "number" ? `<div class="mkt">${adds.toLocaleString()} managers added him in the last 48 hours.</div>` : ""}
+        ${vegasPhrase(p) ? `<div class="veg">${vegasPhrase(p)}</div>` : ""}
+      </div></div>`;
+  }).join("");
+
+  const ri = w.risers.map((p) => {
+    const bits = [];
+    if (p.snapJump !== null) bits.push(`snap share up <b>${p.snapJump}%</b>`);
+    if (p.oppJump !== null) bits.push(`touches up <b>${p.oppJump}%</b>`);
+    return `<div class="call">
+      <div class="line"><b>${esc(p.name)}</b>
+        <span class="over">${esc(p.pos)} · ${esc(p.team)} — trending up</span>
+        <span class="delta">${p.adds ? `+${p.adds.toLocaleString()}` : "usage"}</span></div>
+      <div class="why">
+        ${bits.join(", ")} over his last three games against his own season average.
+        ${usagePhrase(p)}
+        This is the claim you make before the projection catches up — he projects only
+        <b>${n1(p.pts)}</b> this week, which is exactly why he is still free.
+        ${typeof p.adds === "number" ? `<div class="mkt">${p.adds.toLocaleString()} managers added him in the last 48 hours.</div>` : ""}
+      </div></div>`;
+  }).join("");
+
+  const faab = typeof L.faabLeft === "number"
+    ? `You have <b>$${L.faabLeft}</b> of FAAB left. <b>No bid figure here, deliberately</b> —
+       nothing in the free data supports one, and a number we modelled would look like a
+       number we measured.`
+    : "";
+
+  return `<section class="calls act waivers">
+    <div class="hd">◎ The wire
+      <span class="tot">${w.upgrades.length + w.risers.length} worth a look</span></div>
+    ${up}
+    ${ri ? `<div class="subhd">Trending up, not yet projected up</div>${ri}` : ""}
+    <div class="sub">${faab} Tap a line for why.</div>
+  </section>`;
+}
+
+// Usage, as a sentence, only when there is enough of it to mean something.
+function usagePhrase(p) {
+  const u = p?.usage;
+  if (!u || !u.games) return "";
+  const bits = [];
+  if (typeof u.snapPct === "number") bits.push(`${Math.round(u.snapPct * 100)}% of snaps`);
+  if (typeof u.oppPerGame === "number") bits.push(`${n1(u.oppPerGame)} touches a game`);
+  if (typeof u.tgtShare === "number" && u.tgtShare > 0)
+    bits.push(`${Math.round(u.tgtShare * 100)}% of targets`);
+  if (!bits.length) return "";
+  return `<div class="mkt">Measured usage over ${u.games} game${u.games > 1 ? "s" : ""}:
+    ${bits.join(", ")}.</div>`;
+}
+
+// ---------------------------------------------------------------------------
+// The Tuesday recap. Appearance condition: it is Tuesday or Wednesday AND
+// there is at least one finished, published week with a recorded decision in
+// it. Silent all the rest of the week, by Chris's decision - a running
+// scoreboard while you are setting a lineup is a distraction.
+// ---------------------------------------------------------------------------
+function recapBlock(L, state) {
+  const r = L.recap;
+  if (!r?.any) return "";
+
+  const rows = r.rows.slice(0, 6).map((row) => {
+    if (row.kind === "lineup") {
+      const took = row.delta <= 0;
+      return `<div class="call">
+        <div class="line"><b>Week ${row.week}</b>
+          <span class="over">${took
+            ? "your lineup held up"
+            : "the suggested lineup would have scored more"}</span>
+          <span class="delta${took ? " good" : ""}">${sgn(row.delta)}</span></div>
+        <div class="why">
+          You scored <b>${n1(row.yours)}</b>. The lineup this tool put in front of you
+          scored <b>${n1(row.suggested)}</b>.
+          ${took
+            ? `Taking the call would have cost you ${n1(Math.abs(row.delta))}. Projections are
+               not results, and a call being wrong once does not make it a bad call — the
+               threshold exists because single weeks are noisy.`
+            : `Worth ${n1(row.delta)} if you had taken it.`}
+          ${row.partial
+            ? `<div class="mkt">Only ${Math.round(row.coverage * 100)}% of those players have
+               published stats yet, so this week is partial and is left out of the totals
+               above.</div>` : ""}
+        </div></div>`;
+    }
+    return `<div class="call">
+      <div class="line"><b>Week ${row.week}</b>
+        <span class="over">locked out — ${esc(row.players.slice(0, 3).join(", "))}</span>
+        <span class="delta">${row.delta === null ? "—" : sgn(row.delta)}</span></div>
+      <div class="why">
+        ${row.couldHaveStarted !== null
+          ? `Who you could not start scored <b>${n1(row.couldHaveStarted)}</b>.` : ""}
+        ${row.hadToStart !== null
+          ? `Who you were stuck with scored <b>${n1(row.hadToStart)}</b>.` : ""}
+        ${row.delta !== null && row.delta > 0
+          ? `Being locked out actually cost <b>${n1(row.delta)}</b> that week.`
+          : `It cost nothing in the end.`}
+      </div></div>`;
+  }).join("");
+
+  return `<section class="calls recap">
+    <div class="hd">↩ Last week
+      <span class="tot">${r.netLineup === null
+        ? ""
+        : `calls ${sgn(r.netLineup)} pts across ${r.weeks} wk`}${
+        r.netLocked === null ? "" : ` · locked out ${sgn(r.netLocked)}`}</span></div>
+    ${rows}
+    <div class="sub">Scored from real results, re-scored at this league's own rules — not the
+      vendor's PPR total. Only weeks nflverse has actually published are graded.
+      <b>This log lives in this browser on this device</b>, so a lineup set on your phone is not
+      in it. Calls and lockouts are totalled separately — a lockout is not a decision you got
+      wrong.${r.partialCount ? ` ${r.partialCount} week${r.partialCount > 1 ? "s are" : " is"}
+      still partly unpublished and excluded from the totals.` : ""} Tap a line for the numbers.</div>
+  </section>`;
+}
+
 function compareBlock(L, state) {
   const sel = state.selection[state.active] || new Set();
   if (sel.size === 0) return "";
@@ -370,6 +554,37 @@ function marketBlock(L, state) {
   </section>`;
 }
 
+// The mirror has to be able to say how old it is. This is the whole reason a
+// build step is tolerable here at all: a derived copy that cannot lie about
+// its own age is a mirror, and one that can is the bug class that bit the old
+// project three times.
+function usageFooter(state) {
+  const u = state.usage;
+  if (!u?.ok) {
+    return `<div class="frow warn"><b>No usage layer this load.</b> Snap share, touches and
+      target share are hidden rather than guessed.</div>`;
+  }
+  const src = u.sources || null;
+  const snapsMissing = src && src.snap_counts && src.snap_counts.ok === false;
+  const f = state.usageFresh;
+  const stale = f?.behind
+    ? ` <span class="warn">nflverse has published newer data since — about ${f.hours}
+        hour${Math.abs(f.hours) === 1 ? "" : "s"} newer. Ask Claude to refresh the mirror.</span>`
+    : f ? " Up to date with nflverse." : "";
+  // Two sources, two claims. A fresh overall stamp over a file whose snap
+  // half never arrived would say "up to date with nflverse" about something
+  // that is missing a whole column, so the payload carries per-source status
+  // and this says what is actually in it.
+  return `<div class="frow"><b>Usage through week ${u.throughWeek}</b>, mirrored from nflverse
+    ${u.generatedAt ? `on ${esc(String(u.generatedAt).slice(0, 10))}` : ""}.${stale}
+    ${snapsMissing
+      ? `<span class="warn">Snap counts did not publish for this build, so snap share is blank
+         everywhere — that is missing data, not zero snaps.</span>`
+      : ""}
+    Snaps, touches and target share are MEASURED, never projected — and a player with no snap row
+    keeps a blank, not a zero.</div>`;
+}
+
 function footer(L, state) {
   const missing = L.roster.filter((p) => !p.hasProjection).length;
   const lv = Object.entries(L.freeBest || {})
@@ -378,7 +593,7 @@ function footer(L, state) {
   const sg = Object.entries(L.sigma || {}).map(([p, s]) => `${p} ${n1(s)}`).join(" · ");
   return `<footer>
     <div class="frow"><b>${esc(L.entry.name)}</b> · ${L.teams} teams · ${L.rosteredCount} players rostered
-      · FAAB $${L.faabLeft} left · playoffs wk ${L.league.settings?.playoff_week_start ?? "?"}</div>
+      ${typeof L.faabLeft === "number" ? `· FAAB $${L.faabLeft} left ` : "· no FAAB in this league "}· playoffs wk ${L.league.settings?.playoff_week_start ?? "?"}</div>
     <div class="frow"><b>Replacement level</b>, measured from who is actually free in this league
       right now: ${esc(lv)}. VOR is a player's projection minus that. It is the number that makes a
       14-team RB2 and an 8-team RB2 different things.</div>
@@ -404,10 +619,12 @@ function footer(L, state) {
     <div class="frow warn"><b>Kickoff locking is OFF this load.</b> The schedule feed could not be
       reached, so no game time is known and nothing below is locked. A call here may be one Sleeper
       will refuse — check the kickoff before you act on it.</div>`}
-    <div class="frow warn"><b>Not wired yet:</b> kicker totals marked ≥ are floors. No usage,
-      matchup or waiver layer yet, and decision memory currently records only lockouts.</div>
-    <div class="frow mono small">Live from api.sleeper.com and raw.githubusercontent.com ·
-      no build step, the source is the site ·
+    ${usageFooter(state)}
+    <div class="frow warn"><b>Not wired yet:</b> kicker totals marked ≥ are floors. No matchup
+      layer. FAAB bid figures are deliberately absent, not missing — nothing free supports one.</div>
+    <div class="frow mono small">Live from api.sleeper.com, api.fantasycalc.com and
+      raw.githubusercontent.com · everything but the usage mirror is fetched in your browser,
+      and the mirror stamps the week it is good through ·
       <a href="https://sleeper.com" target="_blank" rel="noopener">open Sleeper ↗</a></div>
   </footer>`;
 }
