@@ -34,7 +34,7 @@ IDS   = "https://raw.githubusercontent.com/dynastyprocess/data/master/files/db_p
 KEEP  = {"QB", "RB", "WR", "TE"}
 
 COLS = ["wk", "off_pct", "tgt", "rec", "rec_yd", "tgt_share", "ay_share",
-        "wopr", "car", "rush_yd", "att", "pass_yd"]
+        "wopr", "car", "rush_yd", "att", "pass_yd", "opp"]
 
 # What a player ACTUALLY scored, translated into SLEEPER's stat vocabulary at
 # build time rather than in the browser.
@@ -169,6 +169,16 @@ def build(season, out_path):
             num(r.get("rushing_yards"), 0),
             num(r.get("attempts"), 0),
             num(r.get("passing_yards"), 0),
+            # WHO HE PLAYED, per week, taken from the row itself.
+            #
+            # This is NOT derivable in the browser from `tm`. The payload keeps
+            # only the LATEST team ("latest team wins", above), so a player who
+            # changed teams would be scored against the wrong defence for every
+            # week before the move - wrong opponent, and everything downstream
+            # of it wrong too. The source row knows the right answer for that
+            # week, so carry it. Same trap as the baked team column on the old
+            # season pages.
+            r.get("opponent_team") or None,
         ])
         act = {}
         for sleeper_key, cols in ACT.items():

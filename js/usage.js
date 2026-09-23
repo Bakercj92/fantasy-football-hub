@@ -63,6 +63,10 @@ export function index(raw) {
       rushYd:    row[c.rush_yd],
       att:       row[c.att],
       passYd:    row[c.pass_yd],
+      // Who he played THAT week. Absent on a mirror built before the column
+      // existed, which is why matchup.js drops such a row rather than falling
+      // back to the player's current team.
+      opp:       c.opp === undefined ? null : (row[c.opp] ?? null),
     }));
     if (!weeks.length) continue;
     // `actual` is what he really scored that week, already translated into
@@ -143,7 +147,22 @@ export function aggregate(weeks) {
     tgtWeeks:     weeks.filter((w) => typeof w.tgt === "number").length,
     tgtShare:     per(weeks, "tgtShare"),
     tgtShareRecent: per(recent, "tgtShare"),
+    // THE LEADING TRIO.
+    //
+    // Air-yards share and WOPR were already being downloaded and mapped per
+    // week, and then thrown away at aggregate time - only a season-long wopr
+    // survived, with no recent window to compare it to. That is the half of
+    // the mirror that could have been early and wasn't.
+    //
+    // Snaps and opportunities are what a player HAS BEEN given; air-yards
+    // share is what the offence is TRYING to give him. A receiver whose air
+    // yards climb before his catches do is the week-ahead version of the same
+    // story, and it is the only usage number here that moves before a box
+    // score everyone else has also read.
+    ayShare:      per(weeks, "ayShare"),
+    ayShareRecent: per(recent, "ayShare"),
     wopr:         per(weeks, "wopr"),
+    woprRecent:   per(recent, "wopr"),
     carPerGame:   per(weeks, "car"),
     oppPerGame:   opp(weeks),
     oppPerGameRecent: opp(recent),

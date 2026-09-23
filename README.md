@@ -297,6 +297,31 @@ implying it saw everything.
 - ~~The waiver pool~~ **DONE** (Phase C).
 - ~~The day-shaped page~~ **DONE** (Phase D).
 - ~~Decision memory and the recap~~ **DONE** (Phase E).
+- ~~**A matchup layer**~~ **PARTLY DONE (2026-09-23).** `js/matchup.js` builds defence-vs-position
+  from the mirror's own actuals, re-scored at each league's rules, and then **measures whether the
+  result means anything before reporting it.** On 2026 weeks 1-2 it refuses to speak about QB
+  (0.0% signal), WR (0.0%) and TE (14.5%), and reports New York's run defence as "4% more than
+  average" rather than "#8 of 32". The gate is `MIN_SIGNAL = 0.15` and the shrinkage is empirical
+  Bayes on measured reliability, so the layer starts talking on its own as games accrue with no
+  constant to tune.
+
+  The reason for all that machinery: a two-week defence rank is noise. Split-half on 2026 weeks 1-2
+  gives r = -0.04 (QB), -0.06 (WR), +0.07 (TE), +0.24 (RB). A full 2025 season gives 41/21/25/9.7%
+  signal. A raw rank table is a machine for producing confident nonsense, and on 2026-09-23 it
+  produced some.
+
+  Still missing: game environment (implied totals, spread) as a second factor, and wiring into the
+  compare and lineup surfaces. The module is tested and verified against the live mirror but nothing
+  calls it yet.
+
+- **`js/signals.js` — the projection/usage disagreement detector. DONE (2026-09-23).**
+  Two sources answer two different questions: the projection knows who is playing *this* week, the
+  mirror knows how good he has *been*. Using either for the other's question is how three start/sit
+  calls went wrong in one hour. It flags `absent` (projected but missing from the last completed
+  week - the Kyler Murray case), `thin`, and `projection-high`/`projection-low` past one measured
+  sigma. It deliberately does not resolve any of them; the `absent` flag carries a question and a
+  place to look, and a test asserts it contains no recommendation.
+
 - **A matchup layer.** Defence-adjusted expectations are not built. Vegas appears only as context
   behind a call, and streaming a defence off the wire is deliberately not recommended without it.
 - **Injury designations** come from Sleeper and lag the wire by hours; nflverse's 2026 injury file
