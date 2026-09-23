@@ -27,7 +27,8 @@ function serve() {
 async function run({ label, width, height, fcalcOk = true, scheduleOk = true, select = [],
                      league = null, tz = "America/New_York", sim = SIM, settle = 700,
                      waitAfter = 0, usageOk = true, usage = null, upstreamUpdatedAt = null,
-                     seedLog = null, week = null, trendingOk = true, noFaab = false }) {
+                     seedLog = null, week = null, trendingOk = true, noFaab = false,
+                     vacancyOk = true, vacancy = null }) {
   const server = await serve();
   const port = server.address().port;
   const browser = await chromium.launch({ executablePath: "/opt/pw-browsers/chromium" });
@@ -78,9 +79,21 @@ async function run({ label, width, height, fcalcOk = true, scheduleOk = true, se
   });
   // The usage mirror, served from the fixture rather than the repo copy so a
   // scenario can control what week it goes through and when it was built.
+  const vacPayload = vacancy || F.vacancyPayload();
   await page.route("**/data/usage_*.json", (route) => {
     if (!usageOk) return route.fulfill({ status: 404, body: "not found" });
-    return json(route, usage || F.usagePayload());
+    const base = usage || F.usagePayload();
+    // The vacancy fixture carries the usage rows its cross-check needs. They
+    // are merged here rather than duplicated in usagePayload(), so the two
+    // fixtures cannot drift apart about who the disagreeing player is.
+    const extra = vacPayload.__usage || {};
+    return json(route, Object.keys(extra).length
+      ? { ...base, p: { ...base.p, ...extra } } : base);
+  });
+  // The vacancy layer. A 404 must remove the block, not break the page.
+  await page.route("**/data/vacancy_*.json", (route) => {
+    if (!vacancyOk) return route.fulfill({ status: 404, body: "not found" });
+    return json(route, vacPayload);
   });
   // api.github.com IS browser-readable cross-origin - that is the whole reason
   // the staleness check can exist when the asset bytes cannot be fetched.
@@ -150,6 +163,17 @@ async function run({ label, width, height, fcalcOk = true, scheduleOk = true, se
       bodyBg: getComputedStyle(document.body).backgroundColor,
       dayNote: txt(".daynote"),
       order: [...document.querySelectorAll("#app > section")].map((el) => el.className),
+      // The vacancy block, captured the same way the wire is. Asserting only
+      // that the section EXISTS would pass on a block rendering "undefined"
+      // in every sentence - which is precisely the class of bug the copy in
+      // here is most exposed to, since most of its fields are optional.
+      vacancyHd: txt(".calls.vacancy .hd"),
+      vacancyLines: [...document.querySelectorAll(".calls.vacancy .call .line")]
+        .map((e) => e.textContent.replace(/\s+/g, " ").trim()),
+      vacancyWhy: [...document.querySelectorAll(".calls.vacancy .call .why")]
+        .map((e) => e.textContent.replace(/\s+/g, " ").trim()),
+      vacancySub: txt(".calls.vacancy .sub"),
+      vacancySubhd: txt(".calls.vacancy .subhd"),
       waivers: txt(".calls.waivers .hd"),
       waiverLines: [...document.querySelectorAll(".calls.waivers .call .line")]
         .map((e) => e.textContent.replace(/\s+/g, " ").trim()),
@@ -252,6 +276,23 @@ async function run({ label, width, height, fcalcOk = true, scheduleOk = true, se
                sources: { stats_player:{ok:true,rows:900}, snap_counts:{ok:false,rows:0} } } },
     { label:"DAY Monday, compare reachable", width:1440, height:900, sim: MON,
       select:[H.rbValue, H.wrPoints] },
+
+    // --- the vacancy block --------------------------------------------------
+    { label:"VACANCY partial week (only 2 of 32 clubs filed)",
+      width:1440, height:900, sim: WED, week: 4,
+      vacancy: F.vacancyPayload({ week: 2, teamsReported: 2 }) },
+    { label:"VACANCY phone", width:390, height:844, sim: WED, week: 4,
+      vacancy: F.vacancyPayload({ week: 2, teamsReported: 2 }) },
+    { label:"VACANCY layer missing entirely", width:1440, height:900,
+      sim: WED, week: 4, vacancyOk: false },
+    { label:"VACANCY nothing to say (must be silent)", width:1440, height:900,
+      sim: WED, week: 4, vacancy: F.vacancyEmpty() },
+    { label:"VACANCY chart and usage disagree, heir unprojected",
+      width:1440, height:900, sim: WED, week: 4, vacancy: F.vacancyDisagree() },
+    { label:"VACANCY disagreement on a phone", width:390, height:844,
+      sim: WED, week: 4, vacancy: F.vacancyDisagree() },
+    { label:"VACANCY fully-reported week (no caveat)", width:1440, height:900,
+      sim: WED, week: 4, vacancy: F.vacancyPayload({ week: 2, teamsReported: 32 }) },
   ];
   const out = [];
   for (const s of scenarios) out.push(await run(s));

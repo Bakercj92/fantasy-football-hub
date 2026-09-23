@@ -7,6 +7,7 @@ import { values as fcalcValues, leagueShape } from "./fantasycalc.js";
 import { restOfSeason } from "./compare.js";
 import * as usage from "./usage.js";
 import { waiverBoard } from "./waivers.js";
+import * as vacancy from "./vacancy.js";
 import * as sched from "./schedule.js";
 import { recordMissed, recordLineup, recap } from "./memory.js";
 import { render, renderError, setLoading } from "./ui.js";
@@ -20,6 +21,9 @@ const state = {
   // one o'clock would otherwise wipe a comparison mid-read.
   selection: {}, ros: new Map(), rosPending: new Set(), fcalc: new Map(),
   usage: null, usageFresh: null, trending: new Map(),
+  // The vacancy layer rides with usage for the same reason: a local file in
+  // this repo, no network round trip to hide behind a progressive render.
+  vacancy: null,
   // One timestamp for the whole solve. Reading Date.now() separately at each
   // lock check would let a game kick off halfway through a render and produce
   // a lineup that is internally inconsistent.
@@ -43,14 +47,16 @@ async function boot() {
     // Usage rides along here rather than arriving late like the market layers,
     // because it is a local file in this repo - there is no network round trip
     // to hide behind a progressive render.
-    const [projections, schedule, used] = await Promise.all([
+    const [projections, schedule, used, vac] = await Promise.all([
       sleeper.weekProjections(state.season, state.week),
       sched.load(state.season, { now: state.now }),
       usage.load(state.season),
+      vacancy.load(state.season),
     ]);
     state.projections = projections;
     state.schedule = schedule;
     state.usage = used;
+    state.vacancy = vac;
 
     setLoading("Reading your leagues");
     await Promise.all(state.cfg.leagues.map(loadLeague));
@@ -347,6 +353,14 @@ function buildWaivers() {
       // So "his last three games" can mean recently rather than ever.
       throughWeek: state.usage?.throughWeek ?? null,
     });
+    // BUILT AFTER attachUsage(), NOT BESIDE IT.
+    //
+    // The cross-check reads usage off the mirror to ask whether the man the
+    // depth chart promotes is the man actually getting the work. It is handed
+    // the mirror directly rather than reading p.usage off the priced map,
+    // because the player it most wants to ask about is frequently NOT in that
+    // map at all - an unprojected backup is the whole point of the block.
+    L.vacancies = vacancy.vacancyBoard(L, state.vacancy, { usage: state.usage });
   }
 }
 

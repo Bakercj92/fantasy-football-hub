@@ -93,13 +93,13 @@ const chip = (s) => {
 // invisible until the following Sunday. Both blocks hide themselves when they
 // have nothing to say, so carrying them every day costs exactly nothing.
 const PLANS = {
-  0: ["sched", "calls", "compare", "locked", "lineup", "bench", "waivers", "market"], // Sunday
-  1: ["sched", "calls", "locked", "compare", "lineup", "bench", "waivers", "market"], // Monday
-  2: ["sched", "recap", "waivers", "calls", "compare", "locked", "lineup", "bench", "market"],
-  3: ["sched", "waivers", "recap", "calls", "compare", "locked", "lineup", "bench", "market"],
-  4: ["sched", "calls", "compare", "locked", "lineup", "bench", "waivers", "market"], // Thursday
-  5: ["sched", "calls", "compare", "locked", "lineup", "bench", "waivers", "market"], // Friday
-  6: ["sched", "calls", "compare", "locked", "lineup", "bench", "waivers", "market"], // Saturday
+  0: ["sched", "calls", "compare", "locked", "lineup", "bench", "vacancy", "waivers", "market"], // Sunday
+  1: ["sched", "calls", "locked", "compare", "lineup", "bench", "vacancy", "waivers", "market"], // Monday
+  2: ["sched", "recap", "vacancy", "waivers", "calls", "compare", "locked", "lineup", "bench", "market"],
+  3: ["sched", "vacancy", "waivers", "recap", "calls", "compare", "locked", "lineup", "bench", "market"],
+  4: ["sched", "calls", "compare", "locked", "lineup", "bench", "vacancy", "waivers", "market"], // Thursday
+  5: ["sched", "calls", "compare", "locked", "lineup", "bench", "vacancy", "waivers", "market"], // Friday
+  6: ["sched", "calls", "compare", "locked", "lineup", "bench", "vacancy", "waivers", "market"], // Saturday
 };
 
 const DAY_NOTE = {
@@ -134,6 +134,7 @@ export function render(state, handlers) {
     calls:   () => callsBlock(L),
     compare: () => compareBlock(L, state),
     recap:   () => recapBlock(L, state),
+    vacancy: () => vacancyBlock(L, state),
     waivers: () => waiverBlock(L, state),
     locked:  () => lockedBlock(L),
     lineup:  () => lineupTable(L, state),
@@ -163,6 +164,94 @@ export function render(state, handlers) {
   if (clear) clear.addEventListener("click", onClear);
   document.querySelectorAll(".mrow").forEach((el) =>
     el.addEventListener("click", () => el.classList.toggle("open")));
+}
+
+// ---------------------------------------------------------------------------
+// Just came free. Appearance condition: somebody's job opened and the man next
+// in line for it is still unrostered in THIS league, or the depth chart moved
+// somebody up without an injury at all.
+//
+// This is the only block on the page that can speak before a game is played,
+// and the only one whose evidence is a document rather than a measurement.
+// That difference is carried in the copy: every line here says who is hurt,
+// how hurt, and which week's report it came from, because a reader who cannot
+// audit the claim has to take it on faith - and this is the one surface where
+// being early means being less certain.
+// ---------------------------------------------------------------------------
+function vacancyBlock(L, state) {
+  const v = L.vacancies;
+  if (!v?.any) return "";
+
+  // "Questionable, Ankle and did not practise" is accurate and reads like a
+  // form. The status is a judgement and the injury is a body part, so they
+  // join with a preposition rather than a comma.
+  const inj = (o) => {
+    if (!o.inj) return o.st;
+    const w = String(o.inj).toLowerCase();
+    // Ankle, oblique, illness, elbow, Achilles. Caught by rendering, which is
+    // the only place a missing article was ever going to show up.
+    return `${o.st} with ${/^[aeiou]/.test(w) ? "an" : "a"} ${w}`;
+  };
+
+  const vac = v.vacancies.map((p) => {
+    // A player the projection feed has never heard of is the BEST case for
+    // this block, not a gap in it - so the row says so plainly rather than
+    // printing an em dash and hoping nobody asks.
+    const proj = p.unprojected
+      ? `The projection feed has no number for him yet, which is most of why he is still free.`
+      : `He projects <b>${n1(p.pts)}</b> this week.`;
+    return `<div class="call">
+      <div class="line"><b>Claim ${esc(p.nm)}</b>
+        <span class="over">${esc(p.tm)} ${esc(p.pos)}${p.rk} — behind ${esc(p.over.nm)}</span>
+        <span class="delta">${p.over.tier === "confirmed" ? "confirmed" : "watch"}</span></div>
+      <div class="why">
+        <b>${esc(p.over.nm)}</b> is ${esc(inj(p.over))}${
+          p.over.prac && p.over.prac !== p.over.st
+            ? ` and did not practise` : ""}, on the week ${p.over.wk} report${
+          p.stale ? " — last week's, which is the complete one" : ""}.
+        ${esc(p.nm)} is next on ${esc(p.tm)}'s depth chart and unrostered here. ${proj}
+        ${p.climb ? `<div class="mkt">He had already moved up ${p.climb} place${p.climb > 1 ? "s" : ""} in the last eight days.</div>` : ""}
+        ${p.disagree
+          ? `<div class="mkt"><b>The chart and the usage disagree.</b> ${esc(p.disagree.nm)} is
+             ${esc(p.pos)}${p.disagree.rk} on paper but has been getting
+             <b>${n1(p.disagree.opp)}</b> touches a game, and he is free too. In full PPR
+             that is often the one worth having — neither number settles it.</div>`
+          : ""}
+      </div></div>`;
+  }).join("");
+
+  const promo = v.promotions.map((p) => `<div class="call">
+      <div class="line"><b>${esc(p.nm)}</b>
+        <span class="over">${esc(p.tm)} ${esc(p.pos)}${p.rk} — moved up ${p.climb}</span>
+        <span class="delta">depth</span></div>
+      <div class="why">
+        ${esc(p.tm)} moved him up ${p.climb} place${p.climb > 1 ? "s" : ""} in the last eight
+        days with nobody hurt in front of him, which is a coaching decision rather than news
+        — it is not reported anywhere and it reaches a box score a week from now.
+        ${typeof p.opp === "number" ? `He is at <b>${n1(p.opp)}</b> touches a game.` : ""}
+        ${p.unprojected ? `The projection feed still has no number for him.` : ""}
+      </div></div>`).join("");
+
+  // HOW MUCH OF THE LEAGUE HAS ACTUALLY FILED.
+  //
+  // nflverse ingests the practice report club by club, so a Tuesday-evening
+  // build holds a nearly empty current week beside a complete previous one.
+  // Rendering two clubs as though they were thirty-two is the lie this
+  // sentence exists to prevent.
+  const caveat = v.partial
+    ? `Only <b>${v.teamsReported}</b> of 32 clubs have filed a week ${v.week} report so far,
+       so this week's half of the list is incomplete — it fills in through Friday.`
+    : "";
+
+  return `<section class="calls act vacancy">
+    <div class="hd">◎ Just came free
+      <span class="tot">${v.vacancies.length + v.promotions.length} worth a look</span></div>
+    ${vac}
+    ${promo ? `<div class="subhd">Promoted, with nobody hurt</div>${promo}` : ""}
+    <div class="sub">${caveat}
+      Depth chart as of ${esc(String(v.depthAsOf || "").slice(0, 10))}.
+      <b>No bid figure here either</b> — the same reason as the wire below.</div>
+  </section>`;
 }
 
 // ---------------------------------------------------------------------------

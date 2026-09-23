@@ -239,6 +239,181 @@ function usagePayload({ throughWeek = 3, generatedAt = "2026-09-15T09:00:00Z" } 
 }
 let RISER = null, TINY = null;
 
+// --- the vacancy layer ------------------------------------------------------
+//
+// HOSTILE, like everything else here. Chris's real week would light up one
+// branch; this payload lights up all of them at once:
+//
+//   * a quarterback out whose BACKUP IS ALSO OUT, so the block has to walk
+//     past him to the third man (the live Penix/Tua case from week 3)
+//   * an heir the projection feed has never heard of, which is the best case
+//     for this block and the one most likely to render as an em dash
+//   * a depth chart and a usage read that name DIFFERENT men, so the
+//     disagreement copy is exercised
+//   * an absent player too deep on the chart to matter, which must produce
+//     nothing at all
+//   * a player whose Sleeper team contradicts the chart, which must be
+//     DROPPED rather than reconciled
+//   * a promotion with nobody hurt
+//   * a partially-filed current week, so the "only N of 32 clubs" caveat runs
+function vacancyPayload({ week = 2, teamsReported = 32 } = {}) {
+  const taken = new Set(myPlayers);
+  const spare = universe.filter((u) => !taken.has(u.player_id) && u.player.position !== "DEF");
+  const free = new Set(spare.slice(8 * 13).map((u) => u.player_id));   // genuinely unrostered
+
+  // THE HEIR MUST BE FREE; NOBODY ELSE ON THE CHART HAS TO BE.
+  //
+  // The first version of this fixture tried to build whole position groups out
+  // of the free pool and produced an empty payload, because after a 14-team
+  // league takes its 104 players the tail holds eight receivers and no backs
+  // at all. But an absent STARTER is a player we are never claiming - he can
+  // be rostered, and normally is. So the charts are built from the whole
+  // universe and only the man who inherits is required to be free.
+  const group = (team, pos) => universe.filter((u) => u.team === team && u.player.position === pos);
+  const nameOf = (u) => `${u.player.first_name} ${u.player.last_name}`;
+
+  const depth = {}, absent = [], usageRows = {};
+  const put = (u, rk, climb = null) => {
+    depth[u.player_id] = { tm: u.team, pos: u.player.position, rk, climb, nm: nameOf(u) };
+    return u.player_id;
+  };
+  const hurt = (u, o = {}) => absent.push({
+    id: u.player_id, wk: week, nm: nameOf(u), tm: u.team, pos: u.player.position,
+    st: "Out", prac: null, inj: "Hamstring", tier: "confirmed", ...o,
+  });
+
+  // Find a team whose position group has a free member with `above` others
+  // ranked ahead of him.
+  const findChart = (pos, above, skip = new Set()) => {
+    for (const u of spare) {
+      if (u.player.position !== pos || !free.has(u.player_id) || skip.has(u.team)) continue;
+      const g = group(u.team, pos);
+      const i = g.findIndex((x) => x.player_id === u.player_id);
+      if (i >= above) return { team: u.team, chart: g, heirAt: i };
+    }
+    return null;
+  };
+
+  const usedTeams = new Set();
+
+  // 1. WR1 out AND WR2 out, so the block has to walk past a hurt heir.
+  const a = findChart("WR", 2, usedTeams);
+  if (a) {
+    usedTeams.add(a.team);
+    a.chart.forEach((u, i) => put(u, i + 1));
+    hurt(a.chart[0], { inj: "Knee" });
+    hurt(a.chart[1], { st: "Doubtful", inj: "Oblique" });
+  }
+
+  // 2. TE1 out, TE2 free and inheriting - with a THIRD man who has the
+  //    touches, so the disagreement copy runs. Usage rows for him ride along.
+  const b = findChart("TE", 1, usedTeams);
+  if (b) {
+    usedTeams.add(b.team);
+    b.chart.forEach((u, i) => put(u, i + 1));
+    hurt(b.chart[0], { inj: "Knee" });
+    const rival = b.chart.find((u, i) => i > b.heirAt && free.has(u.player_id));
+    if (rival) {
+      // Measured, and higher than the man the chart promotes.
+      usageRows[rival.player_id] = { pos: "TE", tm: b.team, w: [
+        [1, 0.40, 5, 3, 55, 0.14, null, null, 0, 0, 0, 0],
+        [2, 0.44, 6, 4, 61, 0.16, null, null, 0, 0, 0, 0],
+        [3, 0.46, 7, 5, 70, 0.18, null, null, 0, 0, 0, 0]], a: {} };
+      usageRows[b.chart[b.heirAt].player_id] = { pos: "TE", tm: b.team, w: [
+        [1, 0.20, 1, 0, 8, 0.03, null, null, 0, 0, 0, 0],
+        [2, 0.18, 1, 1, 11, 0.03, null, null, 0, 0, 0, 0],
+        [3, 0.22, 2, 1, 14, 0.04, null, null, 0, 0, 0, 0]], a: {} };
+    }
+  }
+
+  // 3. An absence too deep on the chart to free anything.
+  const c = findChart("WR", 3, usedTeams);
+  if (c) {
+    usedTeams.add(c.team);
+    c.chart.forEach((u, i) => put(u, i + 1));
+    hurt(c.chart[c.chart.length - 1], { inj: "Ankle" });
+  }
+
+  // 4. A promotion with nobody hurt: a free tight end moved up two.
+  const d = findChart("TE", 0, usedTeams);
+  if (d) {
+    usedTeams.add(d.team);
+    put(d.chart[d.heirAt], 1, 2);
+  }
+
+  // 5. A chart row whose team contradicts Sleeper. Must be DROPPED, never
+  //    reconciled - the season pages' oldest landmine.
+  const e = findChart("WR", 1, usedTeams);
+  if (e) {
+    put(e.chart[0], 1);
+    hurt(e.chart[0], { inj: "Foot" });
+    depth[e.chart[e.heirAt].player_id] = {
+      tm: "ZZZ", pos: "WR", rk: 2, climb: null, nm: nameOf(e.chart[e.heirAt]),
+    };
+  }
+
+  return {
+    season: 2026, week, weeks: [week - 1, week].filter((w) => w > 0),
+    generated_at: "2026-09-15T09:00:00Z",
+    depth_asof: "2026-09-15T06:02:00Z", depth_prior: "2026-09-07T06:02:00Z",
+    sources: { depth_charts: { ok: true, rows: 500 }, injuries: { ok: true, rows: 200 },
+               weekly_rosters: { ok: true, rows: 800 } },
+    source_updated_at: { depth_charts: null, injuries: null },
+    coverage: { [String(week)]: { teams_reported: teamsReported, rows: 200 },
+                [String(week - 1)]: { teams_reported: 32, rows: 240 } },
+    absent, depth,
+    // Usage the cross-check needs, for the harness to merge into the mirror.
+    // Kept here so the two fixtures cannot drift out of agreement about who
+    // the disagreeing player is.
+    __usage: usageRows,
+  };
+}
+
+// A payload with nothing to say. The block must vanish, not render an empty
+// shell with a heading and a zero count.
+function vacancyEmpty() {
+  const v = vacancyPayload();
+  return { ...v, absent: [], depth: {}, __usage: {} };
+}
+
+// THE DISAGREEMENT, HAND-BUILT.
+//
+// The generated payload cannot produce this shape: after a 14-team league has
+// taken its share, no club has three free players at one position, and the
+// disagreeing man has to be a THIRD name below the heir. So this one uses ids
+// the projection feed has never heard of - which is not a cheat but a second
+// branch, because an unrostered, unprojected player is exactly the case this
+// block exists to surface and the copy for him is different.
+function vacancyDisagree() {
+  const nm = (n) => ({ tm: "KC", pos: "RB", climb: null, nm: n });
+  return {
+    season: 2026, week: 2, weeks: [1, 2],
+    generated_at: "2026-09-15T09:00:00Z",
+    depth_asof: "2026-09-15T06:02:00Z", depth_prior: "2026-09-07T06:02:00Z",
+    sources: { depth_charts:{ok:true,rows:500}, injuries:{ok:true,rows:200},
+               weekly_rosters:{ok:true,rows:800} },
+    coverage: { "2": { teams_reported: 32, rows: 200 }, "1": { teams_reported: 32, rows: 240 } },
+    depth: {
+      "vac-starter": { ...nm("Bell Cow"), rk: 1 },
+      "vac-heir":    { ...nm("Paper Backup"), rk: 2, climb: 1 },
+      "vac-rival":   { ...nm("Pass Catcher"), rk: 3 },
+    },
+    absent: [{ id: "vac-starter", wk: 2, nm: "Bell Cow", tm: "KC", pos: "RB",
+               st: "Questionable", prac: "Did Not Participate In Practice",
+               inj: "Ankle", tier: "watch" }],
+    // The chart promotes the banger; the touches belong to the other man.
+    __usage: {
+      "vac-heir":  { pos:"RB", tm:"KC", w:[[1,0.35,1,1,6,0.03,null,null,7,28,0,0],
+                                           [2,0.38,1,1,9,0.03,null,null,8,31,0,0],
+                                           [3,0.41,2,1,11,0.04,null,null,9,36,0,0]], a:{} },
+      "vac-rival": { pos:"RB", tm:"KC", w:[[1,0.30,6,5,44,0.17,null,null,3,12,0,0],
+                                           [2,0.33,7,6,52,0.19,null,null,4,17,0,0],
+                                           [3,0.36,8,7,61,0.21,null,null,5,23,0,0]], a:{} },
+    },
+  };
+}
+
 module.exports = { SEASON, WEEK, H, universe, LEAGUES, rostersFor, fcalc,
                    seasonWeeks, starters14, starters8, myPlayers,
-                   usagePayload, riser: () => RISER, tiny: () => TINY };
+                   usagePayload, vacancyPayload, vacancyEmpty, vacancyDisagree,
+                   riser: () => RISER, tiny: () => TINY };

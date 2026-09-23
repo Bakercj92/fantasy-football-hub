@@ -7,7 +7,7 @@ const t = (name, fn) => { try { fn(); pass++; } catch (e) { fail++; console.erro
 // The section registry lives inside render(), which needs a DOM. These are the
 // keys it defines; the test asserts the two lists agree, which is the failure
 // mode a typo in a plan would produce.
-const REGISTRY = ["sched","calls","compare","recap","waivers","locked","lineup","bench","market"];
+const REGISTRY = ["sched","calls","compare","recap","vacancy","waivers","locked","lineup","bench","market"];
 const DAYS = [0,1,2,3,4,5,6];
 
 t("every key in every day plan exists in the section registry", () => {
@@ -56,6 +56,32 @@ t("the wire is available every day but leads on Tuesday and Wednesday", () => {
     const plan = dayPlan(d);
     assert.ok(plan.indexOf("waivers") < plan.indexOf("lineup"),
       `on day ${d} the wire must sit above the reference tables`);
+  }
+});
+
+t("the vacancy block is available every day, because a job opens when it opens", () => {
+  // Unlike the recap, nothing about this block is tied to a weekday. An
+  // injury report lands Wednesday, Thursday and Friday; a depth chart moves
+  // whenever a coach decides. Gating it to waiver day would hide the two days
+  // of warning that are the entire reason it exists.
+  for (const d of DAYS) assert.ok(visible("vacancy", d), `vacancy unreachable on day ${d}`);
+});
+
+t("the vacancy block sits directly above the wire, every day", () => {
+  // They answer the same question at different distances - who should I
+  // claim - and reading them apart invites claiming twice for one seat.
+  for (const d of DAYS) {
+    const plan = dayPlan(d);
+    assert.strictEqual(plan[plan.indexOf("vacancy") + 1], "waivers",
+      `day ${d} splits the two claim blocks`);
+  }
+});
+
+t("on the two days claims actually process, both claim blocks lead", () => {
+  for (const d of [2, 3]) {
+    const plan = dayPlan(d);
+    assert.ok(plan.indexOf("vacancy") < plan.indexOf("lineup"),
+      `on day ${d} the vacancy block must sit above the reference tables`);
   }
 });
 
