@@ -8,6 +8,8 @@ import { restOfSeason } from "./compare.js";
 import * as usage from "./usage.js";
 import { waiverBoard } from "./waivers.js";
 import * as vacancy from "./vacancy.js";
+import * as matchup from "./matchup.js";
+import * as signals from "./signals.js";
 import * as sched from "./schedule.js";
 import { recordMissed, recordLineup, recap } from "./memory.js";
 import { render, renderError, setLoading } from "./ui.js";
@@ -142,6 +144,12 @@ async function loadLeague(entry) {
   const levels = replacementLevels(priced, rostered);
   const sigma = sigmaTable(priced, slots, league.total_rosters);
 
+  // Defence-vs-position, built at THIS league's scoring so the table is
+  // denominated in the same points as the projection beside it. Usually
+  // returns a gate-shut table early in a season and says nothing; that is the
+  // module working, not failing. See js/matchup.js.
+  const mtable = matchup.table(state.usage, scoring, rescore);
+
   const byId = new Map();
   const roster = (mine.players || []).map((id) => {
     const p = priced.get(String(id)) || {
@@ -154,7 +162,25 @@ async function loadLeague(entry) {
       // silently hides a call.
       game: null, locked: false, vegas: null,
     };
-    const withValue = { ...p, vor: vor(p, levels) };
+    // Season form at this league's rules, computed WITHOUT mutating the shared
+    // usage index. Both leagues score the skill positions identically today,
+    // but attaching a per-league number to an object two leagues read would be
+    // a bug waiting for the day that stops being true.
+    const ue = state.usage?.byId?.get(String(id)) || null;
+    const entry = ue ? { ...ue, formPts: signals.formFor(ue, scoring, rescore) } : null;
+
+    const withValue = {
+      ...p,
+      vor: vor(p, levels),
+      // Does the forward-looking projection disagree with the backward-looking
+      // mirror, and can the depth chart settle it. See js/signals.js.
+      flags: signals.check({
+        proj: p.pts, usageEntry: entry, throughWeek: state.usage?.throughWeek,
+        sigma: sigma[p.pos], injury: p.injury, pos: p.pos,
+        id: String(id), vacancy: state.vacancy,
+      }),
+      matchup: matchup.read(mtable, p.pos, p.opponent),
+    };
     byId.set(withValue.id, withValue);
     return withValue;
   });

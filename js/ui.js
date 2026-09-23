@@ -93,13 +93,13 @@ const chip = (s) => {
 // invisible until the following Sunday. Both blocks hide themselves when they
 // have nothing to say, so carrying them every day costs exactly nothing.
 const PLANS = {
-  0: ["sched", "calls", "compare", "locked", "lineup", "bench", "vacancy", "waivers", "market"], // Sunday
-  1: ["sched", "calls", "locked", "compare", "lineup", "bench", "vacancy", "waivers", "market"], // Monday
-  2: ["sched", "recap", "vacancy", "waivers", "calls", "compare", "locked", "lineup", "bench", "market"],
-  3: ["sched", "vacancy", "waivers", "recap", "calls", "compare", "locked", "lineup", "bench", "market"],
-  4: ["sched", "calls", "compare", "locked", "lineup", "bench", "vacancy", "waivers", "market"], // Thursday
-  5: ["sched", "calls", "compare", "locked", "lineup", "bench", "vacancy", "waivers", "market"], // Friday
-  6: ["sched", "calls", "compare", "locked", "lineup", "bench", "vacancy", "waivers", "market"], // Saturday
+  0: ["sched", "calls", "signals", "compare", "locked", "lineup", "bench", "vacancy", "waivers", "market"], // Sunday
+  1: ["sched", "calls", "signals", "locked", "compare", "lineup", "bench", "vacancy", "waivers", "market"], // Monday
+  2: ["sched", "recap", "vacancy", "waivers", "signals", "calls", "compare", "locked", "lineup", "bench", "market"],
+  3: ["sched", "vacancy", "waivers", "signals", "recap", "calls", "compare", "locked", "lineup", "bench", "market"],
+  4: ["sched", "calls", "signals", "compare", "locked", "lineup", "bench", "vacancy", "waivers", "market"], // Thursday
+  5: ["sched", "calls", "signals", "compare", "locked", "lineup", "bench", "vacancy", "waivers", "market"], // Friday
+  6: ["sched", "calls", "signals", "compare", "locked", "lineup", "bench", "vacancy", "waivers", "market"], // Saturday
 };
 
 const DAY_NOTE = {
@@ -134,6 +134,7 @@ export function render(state, handlers) {
     calls:   () => callsBlock(L),
     compare: () => compareBlock(L, state),
     recap:   () => recapBlock(L, state),
+    signals: () => signalsBlock(L, state),
     vacancy: () => vacancyBlock(L, state),
     waivers: () => waiverBlock(L, state),
     locked:  () => lockedBlock(L),
@@ -324,6 +325,80 @@ function waiverBlock(L, state) {
 }
 
 // Usage, as a sentence, only when there is enough of it to mean something.
+// ---------------------------------------------------------------------------
+// Signal disagreements. Appearance condition: at least one player on this
+// roster carries a high- or medium-severity flag from js/signals.js - i.e.
+// the projection and the measured usage disagree about him by more than the
+// position's own noise, or he is projected to play and has not.
+//
+// WHY THIS BLOCK IS WORTH A SEAT
+//
+// On 2026-09-23 three start/sit calls went wrong because one signal was read
+// and the other ignored - in both directions. The page had both numbers the
+// whole time and showed neither against the other. This is that comparison,
+// made visible, and it is why the block is NOT day-gated: a lineup can be
+// wrong on any day of the week.
+//
+// The copy states the disagreement and stops. Where the depth chart can settle
+// it, the answer is shown as a fact about the chart ("QB1 on MIN's chart"),
+// never as an instruction.
+// ---------------------------------------------------------------------------
+const SEV_CLS = { high: "out", medium: "dbt", low: "q" };
+
+function signalChip(p) {
+  const f = p?.flags?.[0];
+  if (!f) return "";
+  const label = f.kind === "absent" ? (f.resolution?.kind === "starter" ? "BACK" : "DNP")
+              : f.kind === "thin"   ? "1G"
+              : f.kind === "projection-high" ? "OVER" : "UNDER";
+  const title = f.text + (f.resolution ? ` — ${f.resolution.text}` : f.ask ? ` — ${f.ask}` : "");
+  return `<span class="chip ${SEV_CLS[f.severity] || "q"}" title="${esc(title)}">${label}</span>`;
+}
+
+function signalsBlock(L, state) {
+  const seen = new Set();
+  const rows = [];
+  for (const p of [...(L.optimal || []).map((s) => s?.player), ...(L.roster || [])]) {
+    if (!p || seen.has(p.id)) continue;
+    seen.add(p.id);
+    for (const f of p.flags || []) {
+      // Low severity is normally too quiet for this block - EXCEPT a resolved
+      // absence, which is the one case where "low" means the answer is
+      // reassuring rather than that the finding is small. Filtering it out
+      // left the Murray case visible only as a tooltip, which on a phone is
+      // no place at all: the reader sees a player with no recent usage
+      // anywhere else on the page and has nothing telling him why that is
+      // fine. The resolution IS the payload here.
+      if (f.severity === "low" && !(f.kind === "absent" && f.resolution)) continue;
+      rows.push({ p, f });
+      break;
+    }
+  }
+  if (!rows.length) return "";
+  // Most urgent first, then biggest disagreement. Capped, because a block that
+  // lists a third of the roster is the roster table again with worse copy -
+  // which is exactly what the render harness showed the first version doing.
+  const RANK = { high: 0, medium: 1, low: 2 };
+  rows.sort((a, b) => (RANK[a.f.severity] ?? 9) - (RANK[b.f.severity] ?? 9)
+                   || (b.f.sigmas ?? 99) - (a.f.sigmas ?? 99));
+  const MAX = 5;
+  const shown = rows.slice(0, MAX), rest = rows.length - shown.length;
+  return `<div class="calls signals">
+    <div class="hd">Worth a second look</div>
+    ${shown.map(({ p, f }) => `<div class="call">
+      <div class="line"><b>${esc(p.name)}</b><span class="pos">${esc(p.pos)}</span>
+        <span class="over">${esc(f.text)}</span></div>
+      ${f.resolution
+        ? `<div class="why">${esc(f.resolution.text)}${
+            f.resolution.asOf ? ` \u00b7 depth chart ${esc(String(f.resolution.asOf).slice(0, 10))}` : ""}</div>`
+        : f.ask ? `<div class="why">${esc(f.ask)}</div>` : ""}
+    </div>`).join("")}
+    ${rest > 0 ? `<div class="sub">${rest} more below this one.</div>` : ""}
+    <div class="sub">A projection forecasts this week; measured usage reports the last one.
+      When they disagree this block says so — it does not pick a side.</div>
+  </div>`;
+}
+
 function usagePhrase(p) {
   const u = p?.usage;
   if (!u || !u.games) return "";
@@ -332,9 +407,14 @@ function usagePhrase(p) {
   if (typeof u.oppPerGame === "number") bits.push(`${n1(u.oppPerGame)} touches a game`);
   if (typeof u.tgtShare === "number" && u.tgtShare > 0)
     bits.push(`${Math.round(u.tgtShare * 100)}% of targets`);
-  if (!bits.length) return "";
+  // The matchup read, when it has earned the right to speak. Silent for most
+  // of a season and for whole positions - see js/matchup.js.
+  const m = p?.matchup?.speaks
+    ? `<div class="mkt">${esc(p.matchup.text)}, over ${p.matchup.games} game${
+        p.matchup.games > 1 ? "s" : ""}.</div>` : "";
+  if (!bits.length) return m;
   return `<div class="mkt">Measured usage over ${u.games} game${u.games > 1 ? "s" : ""}:
-    ${bits.join(", ")}.</div>`;
+    ${bits.join(", ")}.</div>${m}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -546,7 +626,7 @@ function row(p, slot, selected = false) {
     <td class="sel"><button class="pick${selected ? " on" : ""}" data-sel="${esc(p.id)}"
       aria-pressed="${selected}" title="Compare ${esc(p.name)}">${selected ? "&#10003;" : "&#9878;"}</button></td>
     <td class="slot">${esc(slot)}</td>
-    <td class="nm">${esc(p.name)}<span class="pos">${esc(p.pos)}</span></td>
+    <td class="nm">${esc(p.name)}<span class="pos">${esc(p.pos)}</span>${signalChip(p)}</td>
     <td class="tm">${esc(p.team)}</td>
     <td class="opp">${p.opponent ? esc(p.opponent) : '<span class="bye">bye</span>'}${lockCell(p)}</td>
     <td class="vor" title="points over the best free agent at this position in this league">${

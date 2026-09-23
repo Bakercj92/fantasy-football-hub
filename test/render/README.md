@@ -18,10 +18,14 @@ container cannot reach anything, so:
 
 1. Copy the site (index.html, app.css, leagues.json, js/) next to these files
    as `site/`.
-2. `curl` the three upstream CSVs into `up/`:
-   - nflverse `games.csv` (schedule + Vegas lines)
-   - DynastyProcess `fp_latest_weekly.csv` (FantasyPros ECR)
-   - DynastyProcess `db_playerids.csv` (the crosswalk)
+2. `curl` the three upstream CSVs into `up/`, **under the names the harness
+   actually reads**, which are not the upstream filenames:
+   - nflverse `games.csv`            -> `up/games.csv` (schedule + Vegas lines)
+   - DynastyProcess `fp_latest_weekly.csv` -> `up/fp.csv`  (FantasyPros ECR)
+   - DynastyProcess `db_playerids.csv`     -> `up/ids.csv` (the crosswalk)
+
+   This README used to list the upstream names only, and the harness dies with
+   a bare ENOENT on the first route it serves. Cost a session two round-trips.
 3. `npm i playwright` and `node harness.js` for the scenario sweep,
    `node measure.js` for column-width measurement.
 

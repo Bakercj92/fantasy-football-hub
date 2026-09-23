@@ -7,7 +7,7 @@ const t = (name, fn) => { try { fn(); pass++; } catch (e) { fail++; console.erro
 // The section registry lives inside render(), which needs a DOM. These are the
 // keys it defines; the test asserts the two lists agree, which is the failure
 // mode a typo in a plan would produce.
-const REGISTRY = ["sched","calls","compare","recap","vacancy","waivers","locked","lineup","bench","market"];
+const REGISTRY = ["sched","calls","signals","compare","recap","vacancy","waivers","locked","lineup","bench","market"];
 const DAYS = [0,1,2,3,4,5,6];
 
 t("every key in every day plan exists in the section registry", () => {
@@ -89,6 +89,28 @@ t("the decision block leads on every day the recap does not", () => {
   for (const d of [0,1,4,5,6]) {
     const plan = dayPlan(d).filter((k) => k !== "sched");
     assert.strictEqual(plan[0], "calls", `day ${d} must open with the decision block`);
+  }
+});
+
+t("the signals block is available every day, because a lineup can be wrong any day", () => {
+  // Not day-gated for the same reason the vacancy block isn't: nothing about a
+  // projection disagreeing with measured usage is tied to a weekday. It hides
+  // itself when no player carries a flag above low severity.
+  for (const d of DAYS) assert.ok(visible("signals", d), `signals unreachable on day ${d}`);
+});
+
+t("the signals block never displaces the decision block from the top", () => {
+  // It reports a disagreement; `calls` reports what to actually DO about the
+  // lineup. The instruction leads and the caveat follows it.
+  //
+  // Scoped to the days the decision block leads at all. On Tuesday and
+  // Wednesday the claim blocks legitimately sit above `calls`, and signals
+  // rides with them - a projection that disagrees with usage is as much a
+  // waiver question as a lineup one.
+  for (const d of [0, 1, 4, 5, 6]) {
+    const plan = dayPlan(d);
+    assert.ok(plan.indexOf("signals") > plan.indexOf("calls"),
+      `day ${d} puts the caveat above the instruction`);
   }
 });
 

@@ -185,7 +185,7 @@ const SIGMA_QB = 6;
 
 t("MURRAY: projected to start but absent from the last completed week", () => {
   const murray = player("QB", "MIN", [{ wk: 1, opp: "GB", act: { pass_yd: 18 } }]);
-  const f = S.check({ proj: 17.2, usageEntry: murray, throughWeek: 2, sigma: SIGMA_QB });
+  const f = S.check({ proj: 17.2, usageEntry: murray, throughWeek: 2, sigma: SIGMA_QB, pos: "QB" });
   const absent = f.find((x) => x.kind === "absent");
   assert.ok(absent, "a high projection with no week-2 row must raise the absent flag");
   assert.match(absent.text, /did not play in week 2/);
@@ -193,7 +193,7 @@ t("MURRAY: projected to start but absent from the last completed week", () => {
 
 t("MURRAY: the absent flag asks a question and refuses to answer it", () => {
   const murray = player("QB", "MIN", [{ wk: 1, opp: "GB", act: { pass_yd: 18 } }]);
-  const [absent] = S.check({ proj: 17.2, usageEntry: murray, throughWeek: 2, sigma: SIGMA_QB });
+  const [absent] = S.check({ proj: 17.2, usageEntry: murray, throughWeek: 2, sigma: SIGMA_QB, pos: "QB" });
   assert.equal(absent.resolvable, false);
   assert.match(absent.ask, /depth chart/);
   // The failure mode this guards: a flag that says "bench him". Both
@@ -202,41 +202,70 @@ t("MURRAY: the absent flag asks a question and refuses to answer it", () => {
     "the absent flag must not contain a recommendation");
 });
 
-t("HERBERT: projection far above season form raises projection-high", () => {
+t("HERBERT: projection well above season form raises projection-high", () => {
   const herbert = { ...player("QB", "LAC", [{ wk: 1, opp: "ARI", act: {} }, { wk: 2, opp: "LV", act: {} }]),
                     formPts: 10.57 };
-  const f = S.check({ proj: 16.12, usageEntry: herbert, throughWeek: 2, sigma: 4 });
+  const f = S.check({ proj: 16.12, usageEntry: herbert, throughWeek: 2, sigma: 3, pos: "QB" });
   const d = f.find((x) => x.kind === "projection-high");
-  assert.ok(d, "a +5.6 gap at sigma 4 is 1.4 sigma and must flag");
+  assert.ok(d, "a +5.6 gap at sigma 3 is 1.85 sigma and must flag");
   assert.match(d.text, /averaging 10\.6/);
+});
+
+t("the gate rejects a gap just under it - 1.4 sigma stays quiet", () => {
+  // Herbert's real gap against a real QB sigma was under one sigma. The
+  // threshold moved from 1.0 to 1.5 after the render harness showed a
+  // one-sigma gate flagging a third of the roster; this pins the new edge so
+  // a future widening has to be deliberate.
+  const p = { ...player("QB", "X", [{ wk: 1, opp: "A", act: {} }, { wk: 2, opp: "B", act: {} }]),
+              formPts: 10.57 };
+  const f = S.check({ proj: 16.12, usageEntry: p, throughWeek: 2, sigma: 4, pos: "QB" });
+  assert.equal(f.length, 0, "1.4 sigma is below the 1.5 gate");
 });
 
 t("YOUNG: projection far below season form raises projection-low", () => {
   const young = { ...player("QB", "CAR", [{ wk: 1, opp: "CHI", act: {} }, { wk: 2, opp: "ATL", act: {} }]),
                   formPts: 27.76 };
-  const f = S.check({ proj: 15.83, usageEntry: young, throughWeek: 2, sigma: 6 });
+  const f = S.check({ proj: 15.83, usageEntry: young, throughWeek: 2, sigma: 6, pos: "QB" });
   assert.ok(f.some((x) => x.kind === "projection-low"));
 });
 
 t("a gap inside one sigma stays quiet", () => {
   const p = { ...player("QB", "X", [{ wk: 1, opp: "A", act: {} }, { wk: 2, opp: "B", act: {} }]), formPts: 18 };
-  assert.equal(S.check({ proj: 20, usageEntry: p, throughWeek: 2, sigma: 6 }).length, 0);
+  assert.equal(S.check({ proj: 20, usageEntry: p, throughWeek: 2, sigma: 6, pos: "QB" }).length, 0);
 });
 
 t("bench bodies below the interest threshold raise nothing", () => {
   const p = player("WR", "X", [{ wk: 1, opp: "A", act: {} }]);
-  assert.deepEqual(S.check({ proj: 3, usageEntry: p, throughWeek: 2, sigma: 3 }), []);
+  assert.deepEqual(S.check({ proj: 3, usageEntry: p, throughWeek: 2, sigma: 3, pos: "WR" }), []);
 });
 
-t("a player with no mirror entry at all is still flagged absent", () => {
-  const f = S.check({ proj: 14, usageEntry: null, throughWeek: 2, sigma: 5 });
+t("REVERSED 2026-09-23: no mirror entry is UNMEASURED, and raises nothing", () => {
+  // This test used to assert the opposite. The render harness showed what the
+  // old rule produced on a real page: twelve rows, eleven of them kickers,
+  // defences and unmatched skill players each announcing "projected 8.0 but
+  // has no usage at all". The mirror covers four positions and joins on a
+  // third-party id map; absence from it is not evidence about a player.
+  const f = S.check({ proj: 14, usageEntry: null, throughWeek: 2, sigma: 5, pos: "RB" });
+  assert.deepEqual(f, []);
+});
+
+t("a kicker is never flagged, because the mirror never carried him", () => {
+  const k = player("K", "GB", [{ wk: 1, opp: "A", act: {} }]);
+  assert.deepEqual(S.check({ proj: 9, usageEntry: k, throughWeek: 2, sigma: 3, pos: "K" }), []);
+  assert.deepEqual(S.check({ proj: 9, usageEntry: null, throughWeek: 2, sigma: 3, pos: "DEF" }), []);
+});
+
+t("a player WITH history who missed the last week is still flagged", () => {
+  // The distinction the reversal above turns on: this is the Murray shape and
+  // it must survive.
+  const p = player("QB", "MIN", [{ wk: 1, opp: "GB", act: { pass_yd: 18 } }]);
+  const f = S.check({ proj: 17.2, usageEntry: p, throughWeek: 2, sigma: SIGMA_QB, pos: "QB" });
   assert.equal(f[0].kind, "absent");
-  assert.match(f[0].text, /no usage at all/);
 });
 
 t("one game of history flags thin rather than pretending to compare", () => {
   const p = player("RB", "X", [{ wk: 2, opp: "A", act: { rush_yd: 50 } }]);
-  const f = S.check({ proj: 12, usageEntry: p, throughWeek: 2, sigma: 4 });
+  const f = S.check({ proj: 12, usageEntry: p, throughWeek: 2, sigma: 4, pos: "RB" });
   assert.ok(f.some((x) => x.kind === "thin"));
   assert.ok(!f.some((x) => x.kind.startsWith("projection-")),
     "cannot claim the projection disagrees with a one-game average");
@@ -250,6 +279,87 @@ t("attachForm averages over games PLAYED, not weeks elapsed", () => {
   const e = m.byId.get("x");
   assert.equal(e.formWeeks, 1);
   assert.equal(e.formPts, 16);   // 100*0.1 + 6 — NOT halved by a week he missed
+});
+
+// ---------------------------------------------------------------------------
+// Resolving the absent flag from the depth chart.
+//
+// The flag's `ask` was always "check the depth chart". vacancy.js now holds
+// one, so these assert that it answers its own question WITHOUT ever crossing
+// into advice.
+
+const VAC = {
+  week: 3,
+  depthAsOf: "2026-09-23T12:43:59Z",
+  absent: [
+    { id: "5849", wk: 2, nm: "Kyler Murray", tm: "MIN", pos: "QB",
+      st: "Out", inj: "Concussion", tier: "confirmed" },
+    { id: "7777", wk: 3, nm: "Ruled Out Guy", tm: "XXX", pos: "RB",
+      st: "Out", inj: "Hamstring", tier: "confirmed" },
+  ],
+  depth: {
+    "5849":  { tm: "MIN", pos: "QB", rk: 1, climb: 0, nm: "Kyler Murray" },
+    "3161":  { tm: "MIN", pos: "QB", rk: 2, climb: 0, nm: "Carson Wentz" },
+    "11565": { tm: "MIN", pos: "QB", rk: 3, climb: 0, nm: "J.J. McCarthy" },
+    "7777":  { tm: "XXX", pos: "RB", rk: 1, climb: 0, nm: "Ruled Out Guy" },
+    "8888":  { tm: "YYY", pos: "QB", rk: 2, climb: 0, nm: "Second Stringer" },
+    "8887":  { tm: "YYY", pos: "QB", rk: 1, climb: 0, nm: "The Starter" },
+  },
+};
+const absentOnly = player("QB", "MIN", [{ wk: 1, opp: "GB", act: { pass_yd: 18 } }]);
+
+t("MURRAY RESOLVED: the depth chart answers the flag's own question", () => {
+  const [f] = S.check({ proj: 17.2, usageEntry: absentOnly, throughWeek: 2,
+                        sigma: SIGMA_QB, id: "5849", vacancy: VAC, pos: "QB" });
+  assert.equal(f.kind, "absent");
+  assert.equal(f.resolvable, true);
+  assert.equal(f.resolution.kind, "starter");
+  assert.match(f.resolution.text, /QB1 on MIN's depth chart/);
+  // The reason for the missed week is carried, because "absent" and "demoted"
+  // are the two readings and this is what separates them.
+  assert.match(f.resolution.text, /week 2 absence was Out, Concussion/);
+  assert.equal(f.severity, "low", "a returning starter is not an alarm");
+});
+
+t("an absence filed for THIS week outranks depth-chart seniority", () => {
+  const p = player("RB", "XXX", [{ wk: 1, opp: "A", act: { rush_yd: 80 } }]);
+  const [f] = S.check({ proj: 14, usageEntry: p, throughWeek: 2,
+                        sigma: 4, id: "7777", vacancy: VAC, pos: "RB" });
+  assert.equal(f.resolution.kind, "ruled-out",
+    "RB1 on the chart is irrelevant if he is Out for the game being projected");
+  assert.match(f.resolution.text, /Out \(Hamstring\) for week 3/);
+  assert.equal(f.severity, "high");
+});
+
+t("a genuine backup resolves as one, and names the man ahead", () => {
+  const p = player("QB", "YYY", [{ wk: 1, opp: "A", act: { pass_yd: 40 } }]);
+  const [f] = S.check({ proj: 15, usageEntry: p, throughWeek: 2,
+                        sigma: SIGMA_QB, id: "8888", vacancy: VAC, pos: "QB" });
+  assert.equal(f.resolution.kind, "backup");
+  assert.match(f.resolution.text, /QB2 on YYY's depth chart, behind The Starter/);
+});
+
+t("NO depth entry leaves the question open - it does not default to backup", () => {
+  const [f] = S.check({ proj: 17.2, usageEntry: absentOnly, throughWeek: 2,
+                        sigma: SIGMA_QB, id: "nobody", vacancy: VAC, pos: "QB" });
+  assert.equal(f.resolvable, false);
+  assert.equal(f.resolution, undefined);
+  assert.match(f.ask, /depth chart/);
+});
+
+t("with no vacancy data at all the flag behaves exactly as before", () => {
+  const [f] = S.check({ proj: 17.2, usageEntry: absentOnly, throughWeek: 2, sigma: SIGMA_QB, pos: "QB" });
+  assert.equal(f.resolvable, false);
+  assert.match(f.ask, /depth chart/);
+});
+
+t("a resolution reports the chart and still never gives advice", () => {
+  for (const id of ["5849", "7777", "8888"]) {
+    const [f] = S.check({ proj: 15, usageEntry: absentOnly, throughWeek: 2,
+                          sigma: SIGMA_QB, id, vacancy: VAC, pos: "QB" });
+    assert.ok(!/\b(start|sit|bench|drop|pick up|must)\b/i.test(f.resolution.text),
+      `resolution for ${id} leaked advice: ${f.resolution.text}`);
+  }
 });
 
 console.log(`signals  ${pass} passed, ${fail} failed`);

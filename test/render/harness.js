@@ -31,7 +31,19 @@ async function run({ label, width, height, fcalcOk = true, scheduleOk = true, se
                      vacancyOk = true, vacancy = null }) {
   const server = await serve();
   const port = server.address().port;
-  const browser = await chromium.launch({ executablePath: "/opt/pw-browsers/chromium" });
+  // The Chromium path is not stable across containers - PLAYWRIGHT_BROWSERS_PATH
+  // holds a versioned directory whose name changes with the image. A hardcoded
+  // path cost a session two round-trips before anything rendered, so probe.
+  const CANDIDATES = [
+    process.env.CHROME_PATH,
+    "/opt/pw-browsers/chromium/chrome-linux/chrome",
+    ...(() => { try {
+      return fs.readdirSync("/opt/pw-browsers").filter((d) => d.startsWith("chromium-"))
+        .map((d) => `/opt/pw-browsers/${d}/chrome-linux/chrome`);
+    } catch { return []; } })(),
+  ].filter(Boolean).filter((p) => { try { return fs.existsSync(p); } catch { return false; } });
+  const browser = await chromium.launch(
+    CANDIDATES.length ? { executablePath: CANDIDATES[0] } : {});
   const ctx = await browser.newContext({ viewport:{ width, height }, timezoneId: tz });
   await ctx.addInitScript(`{
     const REAL = Date.now.bind(Date), T0 = REAL(), SIM = ${sim};
@@ -167,6 +179,18 @@ async function run({ label, width, height, fcalcOk = true, scheduleOk = true, se
       // that the section EXISTS would pass on a block rendering "undefined"
       // in every sentence - which is precisely the class of bug the copy in
       // here is most exposed to, since most of its fields are optional.
+      // The signal-disagreement block. Captured as TEXT for the same reason
+      // the vacancy block is: nearly every field in it is optional (a
+      // resolution may be absent, an `ask` may be absent, the injury reason
+      // may be absent), so "the section exists" would pass on a block reading
+      // "projected undefined but did not play in week undefined".
+      signalsHd: txt(".calls.signals .hd"),
+      signalsLines: [...document.querySelectorAll(".calls.signals .call .line")]
+        .map((e) => e.textContent.replace(/\s+/g, " ").trim()),
+      signalsWhy: [...document.querySelectorAll(".calls.signals .call .why")]
+        .map((e) => e.textContent.replace(/\s+/g, " ").trim()),
+      signalChips: [...document.querySelectorAll("td.nm .chip")]
+        .map((e) => `${e.textContent.trim()}|${e.getAttribute("title") || ""}`),
       vacancyHd: txt(".calls.vacancy .hd"),
       vacancyLines: [...document.querySelectorAll(".calls.vacancy .call .line")]
         .map((e) => e.textContent.replace(/\s+/g, " ").trim()),
@@ -216,6 +240,39 @@ async function run({ label, width, height, fcalcOk = true, scheduleOk = true, se
     kind: "lineup", leagueKey: "joop", season: "2026", week: 2,
     started: [H.wrB], suggested: [H.wrPoints], threshold: 1.6,
   }];
+
+  // --- signal-disagreement fixtures ---------------------------------------
+  // Each removes the LAST mirrored week from a rostered starter, which is what
+  // "projected to play, did not play" looks like in the data, and then varies
+  // only what the depth chart says about him. The four outcomes are opposite
+  // in meaning and identical in shape, which is exactly why they need
+  // separate scenarios rather than one.
+  const dropLastWeek = (id) => {
+    const u = F.usagePayload();
+    u.p[id] = { ...u.p[id], w: u.p[id].w.filter((r) => r[0] !== 3), a: { ...u.p[id].a } };
+    delete u.p[id].a["3"];
+    return u;
+  };
+  const vacWith = ({ depth = {}, absent = [] }) => {
+    const v = F.vacancyPayload();
+    return { ...v, depth: { ...v.depth, ...depth }, absent: [...(v.absent || []), ...absent] };
+  };
+  const QB = F.H.qb1;
+  const SIG_STARTER = vacWith({
+    depth: { [QB]: { tm: "CIN", pos: "QB", rk: 1, climb: 0, nm: "Starting Quarterback" },
+             "sig-backup": { tm: "CIN", pos: "QB", rk: 2, climb: 0, nm: "The Understudy" } },
+    absent: [{ id: QB, wk: 1, nm: "Starting Quarterback", tm: "CIN", pos: "QB",
+               st: "Out", inj: "Concussion", tier: "confirmed" }],
+  });
+  const SIG_RULEDOUT = vacWith({
+    depth: { [QB]: { tm: "CIN", pos: "QB", rk: 1, climb: 0, nm: "Starting Quarterback" } },
+    absent: [{ id: QB, wk: 2, nm: "Starting Quarterback", tm: "CIN", pos: "QB",
+               st: "Out", inj: "Hamstring", tier: "confirmed" }],
+  });
+  const SIG_BACKUP = vacWith({
+    depth: { [QB]: { tm: "CIN", pos: "QB", rk: 2, climb: 0, nm: "Starting Quarterback" },
+             "sig-ahead": { tm: "CIN", pos: "QB", rk: 1, climb: 0, nm: "The Actual Starter" } },
+  });
 
   const scenarios = [
     { label:"laptop · mixed-position pair (RB vs WR)", width:1440, height:900,
@@ -291,6 +348,27 @@ async function run({ label, width, height, fcalcOk = true, scheduleOk = true, se
       width:1440, height:900, sim: WED, week: 4, vacancy: F.vacancyDisagree() },
     { label:"VACANCY disagreement on a phone", width:390, height:844,
       sim: WED, week: 4, vacancy: F.vacancyDisagree() },
+    // --- SIGNALS ------------------------------------------------------------
+    { label:"SIGNALS absent, depth chart says he is back", width:1440, height:900,
+      usage: dropLastWeek(QB), vacancy: SIG_STARTER, select:[] },
+    { label:"SIGNALS absent, and ruled out again this week", width:1440, height:900,
+      usage: dropLastWeek(QB), vacancy: SIG_RULEDOUT, select:[] },
+    { label:"SIGNALS absent, and genuinely a backup", width:1440, height:900,
+      usage: dropLastWeek(QB), vacancy: SIG_BACKUP, select:[] },
+    { label:"SIGNALS absent with NO depth entry (question must stay open)", width:1440, height:900,
+      usage: dropLastWeek(QB), select:[] },
+    { label:"SIGNALS absent, no vacancy layer at all", width:1440, height:900,
+      usage: dropLastWeek(QB), vacancyOk:false, select:[] },
+    // Genuine silence: with no mirror there is nothing to disagree WITH, so
+    // the block must not draw at all. (The base fixture's own players already
+    // carry a real disagreement, so "default scenario" is not a silence test -
+    // which is the trap the vacancy scenarios fell into: two labels, one
+    // rendering.)
+    { label:"SIGNALS no mirror at all (block must be absent)", width:1440, height:900,
+      usageOk:false, select:[] },
+    { label:"SIGNALS on a phone", width:390, height:844,
+      usage: dropLastWeek(QB), vacancy: SIG_STARTER, select:[] },
+
     { label:"VACANCY fully-reported week (no caveat)", width:1440, height:900,
       sim: WED, week: 4, vacancy: F.vacancyPayload({ week: 2, teamsReported: 32 }) },
   ];
