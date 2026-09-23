@@ -202,6 +202,10 @@ function waiverBlock(L, state) {
     const bits = [];
     if (p.snapJump !== null) bits.push(`snap share up <b>${p.snapJump}%</b>`);
     if (p.oppJump !== null) bits.push(`touches up <b>${p.oppJump}%</b>`);
+    // The leading pair, named distinctly: "air yards" is what makes this a
+    // claim about next week rather than a summary of last week.
+    if (p.ayJump != null) bits.push(`air-yards share up <b>${p.ayJump}%</b>`);
+    if (p.woprJump != null) bits.push(`share of the passing game up <b>${p.woprJump}%</b>`);
     return `<div class="call">
       <div class="line"><b>${esc(p.name)}</b>
         <span class="over">${esc(p.pos)} · ${esc(p.team)} — trending up</span>

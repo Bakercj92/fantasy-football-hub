@@ -169,14 +169,48 @@ export function risers(free, { trending = new Map(), throughWeek = null } = {},
     // only ever surface players who are already starters somewhere.
     const snapUp = snapJump !== null && snapJump >= 0.25 && (u.snapPctRecent ?? 0) >= 0.35;
     const oppUp  = oppJump  !== null && oppJump  >= 0.30 && (u.oppPerGameRecent ?? 0) >= 6;
-    if (!snapUp && !oppUp) continue;
+
+    // THE INTENT GATE, AND WHY IT IS A GATE RATHER THAN A FOOTNOTE.
+    //
+    // Snaps and touches are what a player HAS BEEN GIVEN. Air-yards share is
+    // what the offence is TRYING to give him, and it moves first: a receiver
+    // running deeper routes on more of his team's throws is being featured
+    // before a single one of them is caught. Attaching that to rows which had
+    // already qualified on snaps would waste it - by then the box score has
+    // said the same thing out loud and the league has read it.
+    //
+    // WOPR rides along because it is the weighted combination of target share
+    // and air-yards share, so it catches the receiver whose usage grew on both
+    // counts without either moving far enough alone.
+    //
+    // THE FLOORS ARE FLOORS, NOT CALIBRATION. 15% of a team's air yards is
+    // roughly the point below which a receiver is a decoy, and 0.35 WOPR is
+    // roughly a genuine second option. Neither is backtested, and neither
+    // should be described as though it were - they exist to stop a proportional
+    // jump off nothing from reading as a breakout, the same job the 0.35 snap
+    // floor and the 6-touch floor already do above.
+    const ayJump   = delta(u.ayShareRecent, u.ayShare);
+    const woprJump = delta(u.woprRecent, u.wopr);
+    const airUp  = ayJump   !== null && ayJump   >= 0.30 && (u.ayShareRecent ?? 0) >= 0.15;
+    const woprUp = woprJump !== null && woprJump >= 0.30 && (u.woprRecent  ?? 0) >= 0.35;
+
+    if (!snapUp && !oppUp && !airUp && !woprUp) continue;
 
     out.push({
       ...fa,
       snapJump: snapJump === null ? null : Math.round(snapJump * 100),
       oppJump:  oppJump  === null ? null : Math.round(oppJump * 100),
+      // Only reported when the gate actually fired. A jump that did not clear
+      // its floor is a number, not a finding, and printing it would let a
+      // decoy's tripled-from-nothing air-yards share sit on the row looking
+      // like the reason he is listed.
+      ayJump:   airUp  ? Math.round(ayJump * 100) : null,
+      woprJump: woprUp ? Math.round(woprJump * 100) : null,
       adds: trending.get(fa.id) ?? null,
-      score: Math.max(snapJump ?? 0, oppJump ?? 0),
+      score: Math.max(
+        snapUp ? snapJump : 0, oppUp ? oppJump : 0,
+        airUp ? ayJump : 0, woprUp ? woprJump : 0,
+      ),
     });
   }
   return out.sort((a, b) => b.score - a.score).slice(0, limit);

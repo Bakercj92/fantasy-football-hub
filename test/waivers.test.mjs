@@ -143,6 +143,74 @@ t("a proportional jump off a tiny base is not a riser", () => {
   assert.strictEqual(risers([p]).length, 0, "tripling 4% of snaps is still nobody");
 });
 
+// --- the intent gate: air-yards share and WOPR ------------------------------
+//
+// These are the only numbers in the mirror that move BEFORE the box score
+// everyone else reads. Each has to be able to make a riser on its own, or the
+// block can still only ever arrive second.
+
+t("air-yards share climbing from a real base is a riser with no other movement", () => {
+  const p = withUsage({ id:"p", pts:5 },
+    { snapPct:0.50, snapPctRecent:0.52, oppPerGame:4, oppPerGameRecent:4,
+      ayShare:0.18, ayShareRecent:0.31, wopr:0.30, woprRecent:0.31 });
+  const got = risers([p]);
+  assert.strictEqual(got.length, 1, "snaps and touches are flat; the offence's intent is not");
+  assert.strictEqual(got[0].ayJump, 72);
+  assert.strictEqual(got[0].snapJump, 4, "the flat numbers are still reported, just not the reason");
+});
+
+t("a tripled air-yards share off a decoy's base is still a decoy", () => {
+  const p = withUsage({ id:"p", pts:2 },
+    { snapPct:0.20, snapPctRecent:0.21, oppPerGame:1, oppPerGameRecent:1,
+      ayShare:0.02, ayShareRecent:0.07, wopr:0.05, woprRecent:0.06 });
+  assert.strictEqual(risers([p]).length, 0, "7% of a team's air yards is nobody's WR2");
+});
+
+t("WOPR catches the receiver who grew on both counts without either moving far", () => {
+  const p = withUsage({ id:"p", pts:6 },
+    { snapPct:0.55, snapPctRecent:0.58, oppPerGame:4, oppPerGameRecent:4.4,
+      ayShare:0.20, ayShareRecent:0.24, wopr:0.34, woprRecent:0.50 });
+  const got = risers([p]);
+  assert.strictEqual(got.length, 1);
+  assert.strictEqual(got[0].woprJump, 47);
+  assert.strictEqual(got[0].ayJump, null, "20 to 24 percent did not clear its own gate");
+});
+
+t("a jump that did not clear its floor is not printed as the reason", () => {
+  // The number exists either way. Reporting it on a row that qualified for a
+  // different reason would let a decoy's noise sit where the evidence goes.
+  const p = withUsage({ id:"p", pts:5 },
+    { snapPct:0.40, snapPctRecent:0.70, oppPerGame:3, oppPerGameRecent:3,
+      ayShare:0.01, ayShareRecent:0.09, wopr:0.02, woprRecent:0.09 });
+  const got = risers([p]);
+  assert.strictEqual(got.length, 1, "he is a riser on snaps");
+  assert.strictEqual(got[0].ayJump, null);
+  assert.strictEqual(got[0].woprJump, null);
+});
+
+t("the score reflects only gates that actually fired", () => {
+  // Otherwise a huge jump off a base too small to qualify would sort a decoy
+  // above a real breakout.
+  const decoyish = withUsage({ id:"a", pts:5 },
+    { snapPct:0.40, snapPctRecent:0.56, oppPerGame:3, oppPerGameRecent:3,
+      ayShare:0.01, ayShareRecent:0.10, wopr:0.02, woprRecent:0.10 });   // +900% but floored out
+  const real = withUsage({ id:"b", pts:5 },
+    { snapPct:0.40, snapPctRecent:0.64, oppPerGame:3, oppPerGameRecent:3,
+      ayShare:0.20, ayShareRecent:0.28, wopr:0.36, woprRecent:0.40 });
+  const got = risers([decoyish, real]);
+  assert.deepStrictEqual(got.map((g) => g.id), ["b", "a"], "60% of snaps beats 40% of snaps");
+});
+
+t("a player with no air-yards figures at all is unaffected", () => {
+  // MISSING IS NOT ZERO, for the fifth-and-counting time on this project.
+  const p = withUsage({ id:"p", pts:5 },
+    { snapPct:0.40, snapPctRecent:0.70, oppPerGame:3, oppPerGameRecent:3 });
+  const got = risers([p]);
+  assert.strictEqual(got.length, 1);
+  assert.strictEqual(got[0].ayJump, null);
+  assert.strictEqual(got[0].woprJump, null);
+});
+
 t("REGRESSION: a player who has not played in weeks is not a riser", () => {
   // The window is the last three ROWS. Unanchored, a player who ramped up
   // through week 5 and vanished still read as "up 75% over his last three
