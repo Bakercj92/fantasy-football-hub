@@ -3,7 +3,8 @@
   "user_id": "1135437440241680384",
   "sleeper_username": "KurtChillingsworth",
   "leagues": [
-    { "key": "joop", "name": "Joop Squad",         "sleeper_id": "1389373222666932224" },
-    { "key": "bku",  "name": "Ball Knowers United", "sleeper_id": "1393723474328981504" }
+    { "key": "joop", "name": "Joop Squad",            "sleeper_id": "1389373222666932224" },
+    { "key": "bku",  "name": "Ball Knowers United",   "sleeper_id": "1393723474328981504" },
+    { "key": "chop", "name": "Joop Squad Chopped",    "sleeper_id": "1403519228983754752" }
   ]
 }
