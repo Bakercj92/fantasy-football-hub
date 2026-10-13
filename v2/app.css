@@ -117,6 +117,12 @@ a{color:inherit;text-decoration:none}
    LEAGUE SWITCHER
    ======================================================================== */
 .leagues{display:flex;gap:var(--sp2);flex-wrap:wrap;margin-bottom:var(--sp4)}
+/* `hidden` IS ONLY display:none FROM THE UA SHEET, AND ANY display RULE BEATS
+   IT. The switcher is hidden on cross-league pages by setting .hidden, and
+   display:flex above silently overrode it - the element reported
+   hidden === true in the DOM and was fully visible on screen. A render test
+   that checks the property rather than the computed style passes this. */
+.leagues[hidden]{display:none}
 .lg{padding:var(--sp2) var(--sp4);border-radius:var(--r-pill);cursor:pointer;
   background:var(--c-surface);border:1px solid var(--c-line-soft);color:var(--c-mute);
   font-size:var(--s2);font-weight:600;transition:all .15s var(--ease)}
@@ -263,3 +269,50 @@ tr.dead .nm,tr.dead .pt{color:var(--c-dim)}
   animation:spin .7s linear infinite;vertical-align:-1px}
 @keyframes spin{to{transform:rotate(360deg)}}
 @media(prefers-reduced-motion:reduce){*{animation-duration:.01ms!important;transition-duration:.01ms!important}}
+
+/* ===========================================================================
+   TODAY
+   Urgency classes, league groups inside them. The page carries no total and
+   no cross-class ranking, because the numbers in different classes are not
+   the same kind of number - see v2/logic/today.js. Each class says what its
+   own numbers mean, once, under the heading.
+   ======================================================================== */
+.clsx{margin:0 0 var(--sp6)}
+.clsh{display:flex;align-items:baseline;gap:var(--sp2);margin:0 0 var(--sp1);
+  font-size:var(--s5);font-weight:650;letter-spacing:-.012em}
+.clsh .ct{font-size:var(--s2);color:var(--c-dim);font-weight:500}
+.clssub{margin:0 0 var(--sp3);max-width:62ch}
+
+.lgcard{padding:0;overflow:hidden}
+.lgcard > h2{margin:0;padding:var(--sp3) var(--sp4);font-size:var(--s2);
+  letter-spacing:.04em;text-transform:uppercase;color:var(--c-mute);
+  border-bottom:1px solid var(--c-line-soft);background:var(--c-sunken)}
+.lglink:hover{color:var(--c-act)}
+
+/* One row. The whole row is the link - a tap target the size of the line,
+   because this page is read with a thumb. */
+.tline{display:flex;align-items:baseline;gap:var(--sp3);
+  padding:var(--sp3) var(--sp4);border-bottom:1px solid var(--c-line-soft);
+  transition:background .12s var(--ease)}
+.tline:last-child{border-bottom:0}
+.tline:hover{background:var(--c-raised)}
+.tl{flex:1;min-width:0;line-height:var(--lh-tight)}
+.tl .pos{color:var(--c-dim);font-size:var(--s1);margin:0 2px}
+
+.tag{flex:none;font-size:var(--s1);font-weight:650;letter-spacing:.03em;
+  padding:3px var(--sp2);border-radius:var(--r-sm);
+  background:var(--c-raised);color:var(--c-mute);font-variant-numeric:tabular-nums}
+.tag.good{background:var(--c-act-fill);color:var(--c-act)}
+.tag.must{background:#3A1515;color:var(--c-bad)}
+.tag.warn{background:#3A2411;color:var(--c-warn)}
+
+.tline.more .tl{color:var(--c-mute);font-size:var(--s2)}
+
+/* The folded advisory class. */
+details.clsx > summary{list-style:none;cursor:pointer;display:flex;align-items:baseline;
+  gap:var(--sp2);flex-wrap:wrap}
+details.clsx > summary::-webkit-details-marker{display:none}
+details.clsx > summary:hover{color:var(--c-act)}
+details.clsx > summary .more{font-size:var(--s2);color:var(--c-dim);font-weight:400;
+  letter-spacing:0;text-transform:none}
+details.clsx[open] > summary .more{color:var(--c-mute)}

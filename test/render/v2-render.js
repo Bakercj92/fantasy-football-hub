@@ -345,6 +345,83 @@ const ok = (name, cond, detail = "") => {
     await browser.close(); server.close();
   }
 
+  // ---- 7. Today ----------------------------------------------------------
+  console.log("\nTODAY");
+  {
+    const { page, browser, server, errors } = await open({ width: 1280, height: 1000, hash: "#/today" });
+    ok("no page errors", errors.length === 0, errors.join("\n       "));
+    const t = await page.evaluate(() => {
+      const classes = [...document.querySelectorAll(".clsx")].map((sec) => ({
+        label: sec.querySelector(".clsh").firstChild.textContent.trim().replace(/\s+$/, ""),
+        count: Number(sec.querySelector(".clsh .ct").textContent),
+        leagues: [...sec.querySelectorAll(".lgcard")].map((c) => ({
+          name: c.querySelector(".lglink").textContent.trim(),
+          rows: c.querySelectorAll(".tline").length,
+          hrefs: [...c.querySelectorAll(".tline")].map((a) => a.getAttribute("href")),
+        })),
+      }));
+      const sw = document.querySelector("[data-leagues]");
+      const folds = [...document.querySelectorAll(".clsx")];
+      const folded = {
+        watch: folds.some((f) => f.tagName === "DETAILS" && !f.open
+          && /worth knowing/i.test(f.querySelector(".clsh").textContent)),
+        actionableOpen: folds.filter((f) => !/worth knowing/i.test(f.querySelector(".clsh").textContent))
+          .every((f) => f.tagName === "SECTION"),
+      };
+      return { classes, folded, body: document.querySelector("[data-content]").textContent,
+               // COMPUTED STYLE, not .hidden. The `hidden` attribute is only
+               // display:none from the UA sheet and any display rule beats it:
+               // the first version of this check asserted the property, passed,
+               // and the switcher was on screen the whole time.
+               leagueSwitcherHidden: getComputedStyle(sw).display === "none",
+               switcherProp: sw.hidden,
+               switcherBox: sw.getBoundingClientRect().height };
+    });
+    ok("Today renders urgency classes", t.classes.length > 0, JSON.stringify(t.classes).slice(0, 200));
+    ok("the league switcher is ACTUALLY hidden on a cross-league page (not just .hidden)",
+      t.leagueSwitcherHidden === true && t.switcherBox === 0,
+      `computed-hidden=${t.leagueSwitcherHidden} prop=${t.switcherProp} height=${t.switcherBox}px`);
+    ok("no class is an unreadable wall - watch is capped per league",
+      t.classes.every((c) => c.leagues.every((l) => l.rows <= 6)),
+      JSON.stringify(t.classes.map((c) => [c.label, c.leagues.map((l) => l.rows)])));
+    // NOT a ratio assertion. How much there is to watch versus to do is a
+    // property of the week, not of the code - a quiet week with plenty worth
+    // knowing is a legitimate state. What IS assertable: the advisory class
+    // is folded and the actionable ones are not.
+    ok("the advisory class is folded, the actionable ones are open",
+      t.folded.watch === true && t.folded.actionableOpen === true,
+      JSON.stringify(t.folded));
+    ok("every row links into the league that owns it",
+      t.classes.every((c) => c.leagues.every((l) => l.hrefs.every((h) => /^#\/[a-z]+\//.test(h)))),
+      JSON.stringify(t.classes[0]?.leagues?.[0]?.hrefs));
+    ok("NO CROSS-LEAGUE TOTAL anywhere on the page",
+      !/\b(total|combined|across all)\b/i.test(t.body), "the page claims a total");
+    console.log("      classes: " + t.classes.map((c) => `${c.label} (${c.count})`).join(" | "));
+    await page.screenshot({ path: path.join(SHOTS, "v2-today-desktop.png"), fullPage: true });
+    await browser.close(); server.close();
+  }
+  {
+    const { page, browser, server } = await open({ width: 390, height: 844, hash: "#/today" });
+    const m = await page.evaluate(() => {
+      const doc = document.documentElement;
+      const rows = [...document.querySelectorAll(".tline")];
+      return {
+        overflow: doc.scrollWidth - doc.clientWidth,
+        rows: rows.length,
+        shortestTap: Math.min(...rows.map((r) => Math.round(r.getBoundingClientRect().height))),
+        tagsOnOneLine: rows.every((r) => {
+          const tg = r.querySelector(".tag");
+          return !tg || tg.getBoundingClientRect().height < 30;
+        }),
+      };
+    });
+    ok("phone: no horizontal scroll on Today", m.overflow <= 0, `${m.overflow}px`);
+    ok("phone: every row is a thumb-sized tap target", m.shortestTap >= 40, `${m.shortestTap}px`);
+    ok("phone: the number chip never wraps", m.tagsOnOneLine);
+    await page.screenshot({ path: path.join(SHOTS, "v2-today-phone.png"), fullPage: true });
+    await browser.close(); server.close();
+  }
+
   console.log(`\nv2 render: ${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });
