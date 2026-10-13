@@ -1,4 +1,4 @@
-import { freeAgents, upgrades, risers, waiverBoard, POSITIONS_FOR } from "../js/waivers.js";
+import { freeAgents, upgrades, risers, waiverBoard, defStream, POSITIONS_FOR } from "../js/waivers.js";
 import assert from "node:assert";
 
 let pass = 0, fail = 0;
@@ -30,10 +30,15 @@ t("a position this league never starts is not a free agent worth listing", () =>
   assert.strictEqual(freeAgents(pool, new Set(), SLOTS).length, 0);
 });
 
-t("REGRESSION: kickers and defenses are never offered off the wire", () => {
+t("REGRESSION: kickers and defenses stay out of the two RECOMMENDATION lists", () => {
   // Rendering the first version produced four kicker claims at "+6.0" each,
-  // which buried everything that mattered. Kicker totals are floors here, and
-  // both positions are streaming noise week to week.
+  // which buried everything that mattered. Kicker totals are floors here.
+  //
+  // RENAMED 2026-10-12: this still asserts the right thing, but the old name
+  // ("never offered off the wire") stopped being true when defStream() landed.
+  // DEF is now answered on its own ungated path; what this test pins is that it
+  // does not leak into upgrades()/risers() and crowd them out. See the
+  // defStream block at the bottom of this file.
   const pool = priced(
     P({ id:"k",   pos:"K",   pts:12 }),
     P({ id:"def", pos:"DEF", pts:14 }),
@@ -257,6 +262,227 @@ t("a player who is both an upgrade and a riser is listed once, as the upgrade", 
 t("a league with no priced universe yet produces no board rather than throwing", () => {
   assert.strictEqual(waiverBoard(null).any, false);
   assert.strictEqual(waiverBoard({ priced: new Map() }).any, false);
+});
+
+
+// ---------------------------------------------------------------------------
+// defStream() - the standing defence check. Ungated on purpose.
+// ---------------------------------------------------------------------------
+const DL = (over) => ({
+  priced: priced(
+    P({ id:"freeDef", name:"Jacksonville", pos:"DEF", team:"JAX", pts:10.2 }),
+    P({ id:"worseFree", name:"Chicago", pos:"DEF", team:"CHI", pts:7.1 }),
+    P({ id:"ownedDef", name:"Denver", pos:"DEF", team:"DEN", pts:14.0 }),
+    P({ id:"mine", name:"Philadelphia", pos:"DEF", team:"PHI", pts:5.3 }),
+  ),
+  rostered: new Set(["mine", "ownedDef"]),
+  slots: SLOTS,
+  starters: ["q","r1","r2","w1","w2","te","fx","k","mine"],
+  byId: new Map([["mine", P({ id:"mine", name:"Philadelphia", pos:"DEF", team:"PHI", pts:5.3 })]]),
+  sigma: {},
+  ...over,
+});
+
+t("the live 2026-10-06 leak: a 5-point standing defence gap is reported", () => {
+  const d = defStream(DL());
+  assert.strictEqual(d.best.name, "Jacksonville");
+  assert.strictEqual(d.current.name, "Philadelphia");
+  assert.strictEqual(d.gap, 4.9);
+  assert.strictEqual(d.actionable, true);
+});
+
+t("a defence already on a roster is never offered, however well it projects", () => {
+  // Denver projects 14.0 - the best number in the pool - and is owned.
+  const d = defStream(DL());
+  assert.strictEqual(d.best.id, "freeDef");
+});
+
+t("IT SPEAKS WHEN THERE IS NOTHING TO DO. That is the whole point.", () => {
+  // The failure this block exists to stop was a gap nobody looked at, so a
+  // quiet week has to be visibly quiet rather than absent. A version that
+  // returned null - or gated on gap > 0 - passes every other test here.
+  const L = DL({
+    byId: new Map([["mine", P({ id:"mine", name:"Philadelphia", pos:"DEF", team:"PHI", pts:16.0 })]]),
+  });
+  const d = defStream(L);
+  assert.ok(d, "a losing comparison must still produce a row");
+  assert.strictEqual(d.gap, -5.8);
+  assert.strictEqual(d.actionable, false);
+});
+
+t("a locked starter is reported but never actionable - Sleeper would refuse it", () => {
+  const L = DL({
+    byId: new Map([["mine", P({ id:"mine", name:"Philadelphia", pos:"DEF", team:"PHI", pts:5.3, locked:true })]]),
+  });
+  const d = defStream(L);
+  assert.strictEqual(d.gap, 4.9);
+  assert.strictEqual(d.current.locked, true);
+  assert.strictEqual(d.actionable, false);
+});
+
+t("MISSING IS NOT ZERO: an unpriced starter yields an unknown gap, not +10.2", () => {
+  const L = DL({
+    byId: new Map([["mine", P({ id:"mine", name:"Philadelphia", pos:"DEF", team:"PHI", pts:null })]]),
+  });
+  const d = defStream(L);
+  assert.strictEqual(d.gap, null);
+  assert.strictEqual(d.unprojected, true);
+  assert.strictEqual(d.actionable, false);
+});
+
+t("an empty defence seat really is worth zero, and the gap says so", () => {
+  const L = DL({ starters:["q","r1","r2","w1","w2","te","fx","k","0"], byId:new Map() });
+  const d = defStream(L);
+  assert.strictEqual(d.empty, true);
+  assert.strictEqual(d.gap, 10.2);
+  assert.strictEqual(d.actionable, true);
+});
+
+t("AN UNRESOLVED STARTER IS NOT AN EMPTY SEAT", () => {
+  // A real id we failed to look up means we lack data, not that the seat is
+  // free. Reporting a gap here would recommend streaming "over" a defence we
+  // simply did not resolve.
+  const L = DL({ byId: new Map() });
+  const d = defStream(L);
+  assert.strictEqual(d.unresolved, true);
+  assert.strictEqual(d.empty, false);
+  assert.strictEqual(d.gap, null);
+  assert.strictEqual(d.actionable, false);
+});
+
+t("a league that starts no defence gets no row at all", () => {
+  const L = DL({ slots:["QB","RB","WR","TE","FLEX"], starters:["q","r","w","t","f"] });
+  assert.strictEqual(defStream(L), null);
+});
+
+t("no free defence priced yet means no row, rather than an empty one", () => {
+  const L = DL({ priced: priced(P({ id:"mine", pos:"DEF", pts:5.3 })), rostered:new Set(["mine"]) });
+  assert.strictEqual(defStream(L), null);
+});
+
+t("the defence row alone keeps the wire block alive on an otherwise empty week", () => {
+  // waiverBoard().any gates the whole section in ui.js. Before defStream the
+  // answer on a quiet week was false, which is how a standing gap went unseen.
+  const b = waiverBoard(DL());
+  assert.strictEqual(b.upgrades.length, 0);
+  assert.strictEqual(b.risers.length, 0);
+  assert.strictEqual(b.any, true);
+  assert.strictEqual(b.def.actionable, true);
+});
+
+t("AUDIT B1: a free defence that has already kicked off is never offered", () => {
+  // app.js stamps `locked` on every priced player once his game starts. On a
+  // Monday evening nearly every free defence is locked, and recommending one is
+  // an instruction Sleeper refuses.
+  const L = DL({ priced: priced(
+    P({ id:"lockedBetter", name:"Buffalo", pos:"DEF", team:"BUF", pts:14.0, locked:true }),
+    P({ id:"freeDef", name:"Jacksonville", pos:"DEF", team:"JAX", pts:10.2 }),
+    P({ id:"mine", name:"Philadelphia", pos:"DEF", team:"PHI", pts:5.3 }),
+  ) });
+  const d = defStream(L);
+  assert.strictEqual(d.best.name, "Jacksonville");
+  assert.strictEqual(d.gap, 4.9);
+});
+
+t("AUDIT B1: every free defence locked is still a row, and still not an action", () => {
+  const L = DL({ priced: priced(
+    P({ id:"a", name:"Buffalo", pos:"DEF", team:"BUF", pts:14.0, locked:true }),
+    P({ id:"mine", name:"Philadelphia", pos:"DEF", team:"PHI", pts:5.3 }),
+  ) });
+  const d = defStream(L);
+  assert.ok(d, "a vanishing row cannot be told apart from a broken one");
+  assert.strictEqual(d.allLocked, true);
+  assert.strictEqual(d.best, null);
+  assert.strictEqual(d.actionable, false);
+});
+
+t("AUDIT B2: ROUND ONCE, THEN SUBTRACT - the printed arithmetic must close", () => {
+  // Raw-minus-raw rendered "10.2 against 5.3 - a gap of +5.0".
+  const mk = (bp, cp) => defStream(DL({
+    priced: priced(P({ id:"freeDef", name:"Jacksonville", pos:"DEF", team:"JAX", pts:bp }),
+                   P({ id:"mine", name:"Philadelphia", pos:"DEF", team:"PHI", pts:cp })),
+    byId: new Map([["mine", P({ id:"mine", name:"Philadelphia", pos:"DEF", team:"PHI", pts:cp })]]),
+  }));
+  let d = mk(10.24, 5.25);
+  // The two numbers the copy prints, subtracted, must be the gap the copy
+  // prints - to within float noise, since 10.2 - 5.3 is 4.899999999999999 in
+  // IEEE 754 and that is the arithmetic a reader does in their head, not the
+  // arithmetic the bug was about.
+  assert.ok(Math.abs((d.best.pts - d.current.pts) - d.gap) < 1e-9,
+    `printed ${d.best.pts} and ${d.current.pts} but a gap of ${d.gap}`);
+  assert.strictEqual(d.gap, 4.9);
+
+  // Two numbers that print identically must not carry a gap between them.
+  d = mk(5.34, 5.26);
+  assert.strictEqual(d.best.pts, d.current.pts);
+  assert.strictEqual(d.gap, 0);
+  assert.strictEqual(d.actionable, false);
+
+  // A dead heat on the displayed numbers is a dead heat.
+  d = mk(7.05, 7.00);
+  assert.strictEqual(d.gap, 0.1);
+  // ...and a marginally WORSE free defence never reports as a positive zero.
+  d = mk(10.24, 10.26);
+  assert.strictEqual(d.gap, -0.1);
+  assert.ok(!Object.is(d.gap, -0), "a signed negative zero prints as +0.0");
+});
+
+t("AUDIT: the best free defence projecting zero is missing data, not a reading", () => {
+  // rescore({}) returns 0 rather than null, so an unpublished week prices every
+  // defence at zero and the dead-heat copy would call that a measurement.
+  const L = DL({ priced: priced(
+    P({ id:"freeDef", name:"Jacksonville", pos:"DEF", team:"JAX", pts:0 }),
+    P({ id:"mine", name:"Philadelphia", pos:"DEF", team:"PHI", pts:0 }),
+  ), byId: new Map([["mine", P({ id:"mine", name:"Philadelphia", pos:"DEF", team:"PHI", pts:0 })]]) });
+  const d = defStream(L);
+  assert.strictEqual(d.noProjections, true);
+  assert.strictEqual(d.actionable, false);
+});
+
+t("AUDIT: a defence ruled out is not offered", () => {
+  const L = DL({ priced: priced(
+    P({ id:"outDef", name:"Buffalo", pos:"DEF", team:"BUF", pts:14.0, startable:false }),
+    P({ id:"freeDef", name:"Jacksonville", pos:"DEF", team:"JAX", pts:10.2 }),
+    P({ id:"mine", name:"Philadelphia", pos:"DEF", team:"PHI", pts:5.3 }),
+  ) });
+  assert.strictEqual(defStream(L).best.name, "Jacksonville");
+});
+
+t("RE-AUDIT: a bye-week zero is not 'the feed has not published'", () => {
+  // Introduced by the locked-candidate fix: the only UNLOCKED free defence is
+  // on a bye and prices 0, while a published 14.0 sits locked beside it. Read
+  // off `best` alone, that zero claimed the whole feed was missing.
+  const L = DL({ priced: priced(
+    P({ id:"lockedGood", name:"Buffalo", pos:"DEF", team:"BUF", pts:14.0, locked:true }),
+    P({ id:"onBye",      name:"Chicago", pos:"DEF", team:"CHI", pts:0 }),
+    P({ id:"mine",       name:"Philadelphia", pos:"DEF", team:"PHI", pts:5.3 }),
+  ) });
+  const d = defStream(L);
+  assert.strictEqual(d.noProjections, false, "the feed published — one option is on a bye");
+  assert.strictEqual(d.best.name, "Chicago");
+  assert.strictEqual(d.gap, -5.3);
+  assert.strictEqual(d.actionable, false);
+});
+
+t("RE-AUDIT: a genuinely unpublished week is still caught", () => {
+  const L = DL({ priced: priced(
+    P({ id:"a", name:"Buffalo", pos:"DEF", team:"BUF", pts:0 }),
+    P({ id:"mine", name:"Philadelphia", pos:"DEF", team:"PHI", pts:0 }),
+  ), byId: new Map([["mine", P({ id:"mine", name:"Philadelphia", pos:"DEF", team:"PHI", pts:0 })]]) });
+  assert.strictEqual(defStream(L).noProjections, true);
+});
+
+t("RE-AUDIT: a negative-scoring defence cannot sneak past the published check", () => {
+  // Reachable where pts_allow carries a penalty: yours prices below zero, so a
+  // zero-point free defence is a positive gap. Nothing pinned this guard.
+  const L = DL({ priced: priced(
+    P({ id:"freeDef", name:"Jacksonville", pos:"DEF", team:"JAX", pts:0 }),
+    P({ id:"mine", name:"Philadelphia", pos:"DEF", team:"PHI", pts:-4.0 }),
+  ), byId: new Map([["mine", P({ id:"mine", name:"Philadelphia", pos:"DEF", team:"PHI", pts:-4.0 })]]) });
+  const d = defStream(L);
+  assert.strictEqual(d.gap, 4);
+  assert.strictEqual(d.noProjections, true);
+  assert.strictEqual(d.actionable, false, "an unpublished feed is never an action");
 });
 
 console.log(`waivers  ${pass} passed, ${fail} failed`);

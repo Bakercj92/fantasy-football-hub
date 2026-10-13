@@ -28,7 +28,8 @@ async function run({ label, width, height, fcalcOk = true, scheduleOk = true, se
                      league = null, tz = "America/New_York", sim = SIM, settle = 700,
                      waitAfter = 0, usageOk = true, usage = null, upstreamUpdatedAt = null,
                      seedLog = null, week = null, trendingOk = true, noFaab = false,
-                     vacancyOk = true, vacancy = null }) {
+                     vacancyOk = true, vacancy = null, displayWeek = null,
+                     defPts = null }) {
   const server = await serve();
   const port = server.address().port;
   // The Chromium path is not stable across containers - PLAYWRIGHT_BROWSERS_PATH
@@ -70,7 +71,17 @@ async function run({ label, width, height, fcalcOk = true, scheduleOk = true, se
     const p = u.pathname;
     if (p === "/v1/state/nfl") {
       const wk = week || F.WEEK;
-      return json(route, { season: F.SEASON, display_week: wk, week: wk });
+      // DISPLAY_WEEK AND WEEK MUST BE SEPARATELY SETTABLE.
+      //
+      // This served them identical, so the one divergence that exists in the
+      // real payload - waiver night, when display_week still shows the week
+      // just finished while week has advanced - was UNREACHABLE from here. The
+      // bug it hides priced the entire forward half of the page against a
+      // finished week, and no scenario could see it. Same shape as the vacancy
+      // "partial week" scenario that was byte-identical to its neighbour.
+      return json(route, {
+        season: F.SEASON, week: wk, display_week: displayWeek ?? wk,
+      });
     }
     if (p === "/v1/players/nfl/trending/add") {
       if (!trendingOk) return route.abort("failed");
@@ -80,13 +91,39 @@ async function run({ label, width, height, fcalcOk = true, scheduleOk = true, se
     let m = p.match(/^\/v1\/league\/(\d+)$/);
     if (m) {
       const L = F.LEAGUES[m[1]];
+      if (!L) {
+        throw new Error(
+          `render fixture has no league ${m[1]} - leagues.json and fixture.js ` +
+          `disagree about which leagues this page loads.`);
+      }
       const settings = noFaab ? { playoff_week_start: 15 } : L.settings;
       return json(route, { ...L, settings, league_id: m[1] });
     }
     m = p.match(/^\/v1\/league\/(\d+)\/rosters$/);
-    if (m) return json(route, F.rostersFor(m[1], m[1] === "1389373222666932224" ? F.starters14 : F.starters8));
+    if (m) {
+      // Per-league starters, keyed explicitly. The old form was a two-way
+      // ternary, so a third league silently got Ball Knowers' superflex lineup
+      // against its own nine-slot roster.
+      const STARTERS = {
+        "1389373222666932224": F.starters14,
+        "1393723474328981504": F.starters8,
+        "1403519228983754752": F.startersChop,
+      };
+      return json(route, F.rostersFor(m[1], STARTERS[m[1]] || F.starters14));
+    }
     if (/^\/projections\/nfl\/player\/(.+)$/.test(p)) return json(route, F.seasonWeeks(p.split("/").pop()));
-    if (/^\/projections\/nfl\/\d+\/\d+$/.test(p)) return json(route, F.universe);
+    if (/^\/projections\/nfl\/\d+\/\d+$/.test(p)) {
+      // EVERY DEFENCE IN THE FIXTURE PROJECTS IDENTICALLY, which makes the
+      // standing-defence row a permanent dead heat and leaves its two
+      // interesting states unreachable. `defPts` rewrites sacks for named
+      // teams, and sacks are worth exactly 1 at the fixture's scoring, so the
+      // number asked for is the number projected.
+      if (!defPts) return json(route, F.universe);
+      return json(route, F.universe.map((e) => (
+        e.player?.position === "DEF" && defPts[e.team] != null
+          ? { ...e, stats: { ...e.stats, sack: defPts[e.team] } }
+          : e)));
+    }
     return json(route, []);
   });
   // The usage mirror, served from the fixture rather than the repo copy so a
@@ -137,6 +174,15 @@ async function run({ label, width, height, fcalcOk = true, scheduleOk = true, se
   await page.waitForTimeout(settle);
   if (waitAfter) await page.waitForTimeout(waitAfter);
 
+  // Optional PNG per scenario, `SHOT=1 node harness.js`. Off by default so the
+  // sweep stays fast and text-only - but the two defence scenarios and the
+  // phone widths are worth looking at with eyes, and reconstructing the route
+  // table by hand to take one screenshot is a waste of a session.
+  if (process.env.SHOT) {
+    const safe = label.replace(/[^a-z0-9]+/gi, "_").slice(0, 60);
+    try { fs.mkdirSync("shots", { recursive: true }); } catch {}
+    await page.screenshot({ path: `shots/${safe}.png`, fullPage: true });
+  }
   const report = await page.evaluate(() => {
     const txt = (sel) => document.querySelector(sel)?.textContent.replace(/\s+/g, " ").trim() || null;
     const q = (s) => document.querySelector(s);
@@ -201,6 +247,29 @@ async function run({ label, width, height, fcalcOk = true, scheduleOk = true, se
       waivers: txt(".calls.waivers .hd"),
       waiverLines: [...document.querySelectorAll(".calls.waivers .call .line")]
         .map((e) => e.textContent.replace(/\s+/g, " ").trim()),
+
+      // The week the header is actually telling Chris about. On waiver night
+      // this is the assertion that catches the trap: the header has to name the
+      // week being priced, and name the graded week separately when they differ.
+      header: txt("header .wk"),
+
+      // The standing-defence row. Captured as text, and the calm/actionable
+      // distinction captured as a class, because "the row exists" passes on a
+      // row printing "undefined" and on a do-nothing row styled like a claim.
+      defRow: (() => {
+        const sub = [...document.querySelectorAll(".calls.waivers .subhd")]
+          .find((e) => /defence/i.test(e.textContent));
+        if (!sub) return null;
+        const row = sub.nextElementSibling;
+        if (!row || !row.classList.contains("call")) return null;
+        return {
+          calm: row.classList.contains("calm"),
+          line: row.querySelector(".line")?.textContent.replace(/\s+/g, " ").trim() || null,
+          why: row.querySelector(".why")?.textContent.replace(/\s+/g, " ").trim() || null,
+          delta: row.querySelector(".delta")?.textContent.trim() || null,
+        };
+      })(),
+      wireTotal: txt(".calls.waivers .tot"),
       recapHd: txt(".calls.recap .hd"),
       recapLines: [...document.querySelectorAll(".calls.recap .call .line")]
         .map((e) => e.textContent.replace(/\s+/g, " ").trim()),
@@ -373,6 +442,40 @@ async function run({ label, width, height, fcalcOk = true, scheduleOk = true, se
       sim: WED, week: 4, vacancy: F.vacancyPayload({ week: 2, teamsReported: 32 }) },
   ];
   const out = [];
+  // ---- the waiver-night week divergence, previously unreachable -----------
+  scenarios.push(
+    { label:"WEEK waiver night — display_week 4 while week 5 is priced",
+      width:1440, height:900, sim: TUE, week: 5, displayWeek: 4, seedLog },
+    { label:"WEEK waiver night, phone", width:390, height:844,
+      sim: TUE, week: 5, displayWeek: 4, seedLog },
+  );
+
+  // ---- the standing defence, all three live states ------------------------
+  // KC is the rostered defence in every fixture lineup; BUF is free and is what
+  // the row picks as best when nothing is overridden. Both MUST be in the
+  // fixture's TEAMS list - the first version of these scenarios named a club
+  // that is not, so the override matched nothing, the "leak" scenario rendered
+  // a NEGATIVE gap, and its label claimed the opposite of what it proved.
+  scenarios.push(
+    { label:"DEF the live 2026-10-06 leak (rostered 5.3 vs free 10.2)",
+      width:1440, height:900, sim: TUE, week: 5, displayWeek: 4,
+      defPts: { KC: 5.3, BUF: 10.2 } },
+    { label:"DEF the leak, phone", width:390, height:844, sim: TUE, week: 5,
+      displayWeek: 4, defPts: { KC: 5.3, BUF: 10.2 } },
+    { label:"DEF yours is better — quiet, and still shown",
+      width:1440, height:900, sim: WED, week: 5, defPts: { KC: 16.0 } },
+  );
+
+  // Chopped is in leagues.json and in the fixture, but nothing ever PAINTED it.
+  // Its $1000 FAAB budget is the reason the fixture carries it, and that figure
+  // renders in the wire block - so a scenario has to open the tab.
+  scenarios.push(
+    { label:"LEAGUE Chopped — nine slots, $1000 FAAB", width:1440, height:900,
+      sim: WED, week: 5, league: "chop" },
+    { label:"LEAGUE Chopped, phone", width:390, height:844,
+      sim: WED, week: 5, league: "chop" },
+  );
+
   for (const s of scenarios) out.push(await run(s));
   console.log(JSON.stringify(out, null, 1));
 })();

@@ -54,6 +54,11 @@ header{display:flex;align-items:baseline;justify-content:space-between;gap:12px;
 .call .why{display:none;font-size:var(--s2);color:var(--mute);padding:9px 0 3px;line-height:1.6}
 .call.open .why{display:block}
 .call .inj{color:var(--warn)}
+/* A row that is reporting "nothing to do" rather than asking for an action.
+   The standing defence check renders every week by design, so on a quiet week
+   it must not look like the claims above it - same shape, lower voice. */
+.call.calm .line b{font-weight:550;color:var(--mute)}
+.call.calm .delta{color:var(--dim);font-weight:550}
 
 .block{margin-bottom:20px}
 h2{font-size:var(--s2);font-weight:600;text-transform:uppercase;letter-spacing:.06em;

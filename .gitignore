@@ -24,3 +24,6 @@ _to_delete/
 
 # Working backups, any suffix shape (.bak, .bak-DATE, .bak2-DATE).
 *.bak*
+
+# Render-harness screenshots (SHOT=1). Local looking-at-it output.
+test/render/shots/

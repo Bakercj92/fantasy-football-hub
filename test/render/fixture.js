@@ -92,6 +92,14 @@ const starters14 = [H.qb1, H.rbValue, H.out, H.wrPoints, H.lockedBadStarter, H.r
 // BKU:   QB RB RB WR WR TE FLEX SUPER_FLEX K DEF
 const starters8  = [H.qb1, H.rbValue, H.lockedGoodBench, H.wrPoints, H.wrA, H.tieA,
                     "0", H.qb2, H.k1, "KC"];
+// CHOPPED: QB RB RB WR WR TE FLEX K DEF - nine slots, no third WR and no
+// superflex. Added 2026-10-12, because leagues.json has carried this league
+// since 2026-10-06 and the harness had no entry for it: every scenario died in
+// the league route with "Cannot read properties of undefined (reading
+// 'settings')" the moment the real config was staged beside the fixture. A
+// fixture that only knows two of three leagues is not a test of this page.
+const startersChop = [H.qb1, H.rbValue, H.out, H.wrPoints, H.wrA, H.tieA,
+                      H.bogus, H.k1, "KC"];
 
 const SCORING = { rec: 1, pass_yd: 0.04, pass_td: 4, rush_yd: 0.1, rush_td: 6,
                   rec_yd: 0.1, rec_td: 6, fgm: 3, xpm: 1, sack: 1, pts_allow: 0, def_td: 6 };
@@ -109,10 +117,25 @@ const LEAGUES = {
                        "BN","BN","BN","BN","BN","BN"],
     settings: { waiver_budget: 100, playoff_week_start: 15 },
   },
+  // Joop Squad Chopped. Same scoring as Joop, no superflex, and a $1000 FAAB
+  // budget rather than $100 - which is the property worth having in a fixture,
+  // because the FAAB line renders the figure.
+  "1403519228983754752": {
+    name: "Joop Squad Chopped", total_rosters: 14, scoring_settings: SCORING,
+    roster_positions: ["QB","RB","RB","WR","WR","TE","FLEX","K","DEF",
+                       "BN","BN","BN","BN","BN","IR","IR"],
+    settings: { waiver_budget: 1000, playoff_week_start: 15 },
+  },
 };
 
 // Other managers own enough that replacement level lands somewhere real.
 function rostersFor(id, starters) {
+  if (!LEAGUES[id]) {
+    throw new Error(
+      `render fixture has no league ${id}. leagues.json carries a league this ` +
+      `fixture does not know, so the page under test is not the page that ships. ` +
+      `Add it to LEAGUES in fixture.js.`);
+  }
   const teams = LEAGUES[id].total_rosters;
   const mine = { owner_id: "1135437440241680384", players: myPlayers, starters,
                  settings: { waiver_budget_used: 23 } };
@@ -414,6 +437,6 @@ function vacancyDisagree() {
 }
 
 module.exports = { SEASON, WEEK, H, universe, LEAGUES, rostersFor, fcalc,
-                   seasonWeeks, starters14, starters8, myPlayers,
+                   seasonWeeks, starters14, starters8, startersChop, myPlayers,
                    usagePayload, vacancyPayload, vacancyEmpty, vacancyDisagree,
                    riser: () => RISER, tiny: () => TINY };

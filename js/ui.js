@@ -146,7 +146,8 @@ export function render(state, handlers) {
   $("#app").innerHTML = `
     <header>
       <div class="title">Fantasy Football Hub</div>
-      <div class="wk">Week ${state.week} · ${esc(state.season)}</div>
+      <div class="wk">Week ${state.week} · ${esc(state.season)}${
+        state.gradedWeek ? ` · week ${state.gradedWeek} in the books` : ""}</div>
     </header>
     <nav class="tabs">${tabs}</nav>
     <div class="daynote">${esc(dayNote(day))}</div>
@@ -261,6 +262,115 @@ function vacancyBlock(L, state) {
 // Otherwise this block does not exist. There is no browsable free-agent list
 // here on purpose - Sleeper already has one, and a better one.
 // ---------------------------------------------------------------------------
+// THE STANDING DEFENCE ROW. Present on every load, including - deliberately -
+// the loads where the answer is "yours is fine". See defStream() in waivers.js
+// for why it is ungated, and why the copy below calls it a projection gap
+// rather than a matchup read.
+// Exported for test only: every branch below is copy, and copy is what the
+// render layer has actually caught on this project ("Questionable, Ankle and
+// did not practise" reading like a form; "a ankle"; a block printing
+// "undefined" in every sentence while a presence assertion passed). Asserting
+// the TEXT of all six branches is cheap in node and does not need a browser.
+export function defRow(d) {
+  if (!d) return "";
+  // GUARDED, because the all-locked row has no best defence to name - every
+  // free one has already played. The first version read d.best.name
+  // unconditionally and threw, which would have blanked the whole page on a
+  // Monday evening. Caught by the branch test, not by the browser.
+  const best = d.best
+    ? `<b>${esc(d.best.name)}</b> (${n1(d.best.pts)}${
+        d.best.opponent ? ` vs ${esc(d.best.opponent)}` : ""})`
+    : "";
+
+  let line, why;
+  if (d.noProjections) {
+    // The best FREE defence projecting zero means the feed has not published
+    // defence numbers for this week, not that every defence is worthless.
+    line = `<div class="line"><b>No defence projections yet</b>
+      <span class="over">for your ${esc(d.slot)}</span>
+      <span class="delta">—</span></div>`;
+    why = `Sleeper has not published defence projections for this week, so every
+      defence prices at zero and there is no comparison to make. This row will answer
+      itself once the feed fills in.`;
+  } else if (d.allLocked) {
+    line = `<div class="line"><b>Every free defence has already played</b>
+      <span class="over">${d.empty || d.unresolved
+        ? `and your ${esc(d.slot)} is ${d.empty ? "empty" : "unresolved"}`
+        : `holding your ${esc(d.slot)}`}</span>
+      <span class="delta">—</span></div>`;
+    why = `There is nothing claimable at defence this week — every free one has kicked
+      off, so Sleeper would refuse the swap whatever the projections said. Checked, and
+      nothing to do.`;
+  } else if (d.empty) {
+    line = `<div class="line"><b>Stream ${esc(d.best.name)}</b>
+      <span class="over">into your empty ${esc(d.slot)}</span>
+      <span class="delta">${n1(d.best.pts)}</span></div>`;
+    why = `Your ${esc(d.slot)} seat is empty. ${best} is the best free defence at this
+      league's scoring.`;
+  } else if (d.unresolved) {
+    line = `<div class="line"><b>Check your ${esc(d.slot)}</b>
+      <span class="over">starter could not be resolved</span>
+      <span class="delta">—</span></div>`;
+    why = `Something is in your ${esc(d.slot)} that this page could not look up, so there is
+      no gap to report. The best free defence is ${best}. Missing data is not a bad
+      defence — look at the seat yourself before acting.`;
+  } else if (d.unprojected) {
+    line = `<div class="line"><b>${esc(d.current.name)} is not priced this week</b>
+      <span class="over">in your ${esc(d.slot)}</span>
+      <span class="delta">—</span></div>`;
+    why = `The feed carries no projection for ${esc(d.current.name)}, so the gap against
+      ${best} is unknown rather than favourable.`;
+  } else if (d.current.locked) {
+    line = `<div class="line"><b>${esc(d.current.name)} is locked</b>
+      <span class="over">in your ${esc(d.slot)}</span>
+      <span class="delta">${d.gap === null ? "—" : sgn(d.gap)}</span></div>`;
+    why = `${best} projects ${d.gap === null ? "differently" : `<b>${sgn(d.gap)}</b>`}, but
+      ${esc(d.current.name)} has already kicked off, so Sleeper will refuse the swap this
+      week. Worth remembering for next week.`;
+  } else if (d.actionable) {
+    line = `<div class="line"><b>Stream ${esc(d.best.name)}</b>
+      <span class="over">over <b>${esc(d.current.name)}</b> in your ${esc(d.slot)}</span>
+      <span class="delta">${sgn(d.gap)}</span></div>`;
+    why = `${best} against <b>${esc(d.current.name)}</b> (${n1(d.current.pts)}) — a gap of
+      <b>${sgn(d.gap)}</b> at this league's scoring. <b>This is a projection gap, not a
+      matchup read.</b> Nothing on this page measures the offence either defence is about to
+      face — that question has never been asked here, rather than asked and answered. What
+      the numbers do support is narrower: the defence you are starting projects lower than
+      one nobody owns.`;
+  } else if (d.gap === 0) {
+    // CAUGHT BY RENDERING. Every defence in the render fixture projects
+    // identically, which put a dead heat through the branch below and produced
+    // "Philadelphia is the better bet ... +0.0" - a verdict the number does not
+    // support. A tie is a real outcome of this comparison, not a win.
+    line = `<div class="line"><b>Nothing between them</b>
+      <span class="over">holding your ${esc(d.slot)}</span>
+      <span class="delta">0.0</span></div>`;
+    why = `${esc(d.current.name)} and <b>${esc(d.best.name)}</b> both project
+      <b>${n1(d.best.pts)}</b> at this league's scoring, so there is no case either way.
+      Not a recommendation to hold — just the absence of a reason to move.`;
+  } else {
+    line = `<div class="line"><b>${esc(d.current.name)} is the better bet</b>
+      <span class="over">holding your ${esc(d.slot)}</span>
+      <span class="delta">${sgn(d.gap)}</span></div>`;
+    why = `${esc(d.current.name)} projects <b>${n1(d.current.pts)}</b> against ${best}.
+      Nothing to do — shown every week on purpose, so a quiet defence seat is quiet
+      because it was checked, not because nothing looked.`;
+  }
+
+  return `<div class="call${d.actionable ? "" : " calm"}">${line}
+    <div class="why">${why}</div></div>`;
+}
+
+// The header count. Pulled out of the template because an inline expression is
+// unreachable from a suite: the audit found that deleting the defence term left
+// every test passing, and the render harness only PRINTS this number.
+export function wireTally(w) {
+  if (!w) return 0;
+  return (w.upgrades?.length || 0) + (w.risers?.length || 0)
+    // A standing row that says "nothing to do" is information, not work.
+    + (w.def?.actionable ? 1 : 0);
+}
+
 function waiverBlock(L, state) {
   const w = L.waivers;
   if (!w?.any) return "";
@@ -315,11 +425,14 @@ function waiverBlock(L, state) {
        number we measured.`
     : "";
 
+  const def = defRow(w.def);
+
   return `<section class="calls act waivers">
     <div class="hd">◎ The wire
-      <span class="tot">${w.upgrades.length + w.risers.length} worth a look</span></div>
+      <span class="tot">${wireTally(w)} worth a look</span></div>
     ${up}
     ${ri ? `<div class="subhd">Trending up, not yet projected up</div>${ri}` : ""}
+    ${def ? `<div class="subhd">Your defence, checked every week</div>${def}` : ""}
     <div class="sub">${faab} Tap a line for why.</div>
   </section>`;
 }
@@ -793,8 +906,11 @@ function footer(L, state) {
       reached, so no game time is known and nothing below is locked. A call here may be one Sleeper
       will refuse — check the kickoff before you act on it.</div>`}
     ${usageFooter(state)}
-    <div class="frow warn"><b>Not wired yet:</b> kicker totals marked ≥ are floors. No matchup
-      layer. FAAB bid figures are deliberately absent, not missing — nothing free supports one.</div>
+    <div class="frow warn"><b>Not wired yet:</b> kicker totals marked ≥ are floors, and kickers
+      are never recommended off the wire for that reason. The defence row is a projection gap:
+      nothing on this page measures the offence a defence is about to face, so it ranks two
+      defences by their own projections and nothing more. FAAB bid figures are deliberately
+      absent, not missing — nothing free supports one.</div>
     <div class="frow mono small">Live from api.sleeper.com, api.fantasycalc.com and
       raw.githubusercontent.com · everything but the usage mirror is fetched in your browser,
       and the mirror stamps the week it is good through ·

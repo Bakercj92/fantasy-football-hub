@@ -16,6 +16,9 @@ import { render, renderError, setLoading } from "./ui.js";
 
 const state = {
   cfg: null, week: null, season: null, projections: null,
+  // The completed week, when it differs from the week being priced. Label
+  // only - see the comment at the assignment in boot().
+  gradedWeek: null,
   leagues: {}, active: null, market: null,
   schedule: null,
   // Compare selection, per league. Kept in state rather than the DOM because
@@ -40,7 +43,24 @@ async function boot() {
     setLoading("Asking Sleeper what week it is");
     const nfl = await sleeper.state();
     state.season = nfl.season;
-    state.week = nfl.display_week || nfl.week || 1;
+    // THE WAIVER-NIGHT WEEK TRAP. `display_week` is what Sleeper's own app is
+    // SHOWING, which on Tuesday is still the week that just finished, while
+    // `week` has already advanced. Measured 2026-10-06: display_week 4, week 5.
+    //
+    // Reading display_week here priced the entire forward-looking half of this
+    // page against a week already in the books - the wire, the lineup check and
+    // every replacement level were answering last week's question on the night
+    // the claims are actually due. It also silently broke the recap in the
+    // other direction: recap() grades weeks strictly BEFORE currentWeek, so a
+    // currentWeek of 4 refused to grade week 4 - the one week the Tuesday
+    // recap exists to grade.
+    //
+    // Both choices live in sleeper.js, beside the call that returns them, and
+    // are tested there - see pricingWeek()/gradedWeek(). `gradedWeek` LABELS
+    // the backward-looking surfaces and nothing else: no arithmetic reads it,
+    // because recap() derives its own bound from state.week.
+    state.week = sleeper.pricingWeek(nfl);
+    state.gradedWeek = sleeper.gradedWeek(nfl);
 
     setLoading(`Pulling week ${state.week} projections and the schedule`);
     // The schedule is NOT a late enrichment like the market layer. Locking is

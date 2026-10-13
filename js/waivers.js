@@ -46,8 +46,20 @@ const n = (v) => (typeof v === "number" && Number.isFinite(v) ? v : null);
 //     "streaming slots whose week-to-week ranking is close to noise". The same
 //     fact makes a six-point projection gap between two kickers meaningless.
 //
-// Streaming a defense is a real move, but it is a matchup call, and this app
-// has no matchup layer yet. When it has one, this is where that lands.
+// DEF STAYS OUT OF THESE TWO LISTS, BUT IT IS NO LONGER SILENT.
+//
+// The exclusion above was measured wrong on 2026-10-06: Chris started
+// Philadelphia at a 5.3 projection while the best free defence in that league
+// projected 10.2, and week 5 had the same shape (PHI 5.52 rostered, JAX 10.69
+// free). A five-point standing gap is not the week-to-week noise this comment
+// describes, and because the position was excluded from the only two lists on
+// the page, nothing ever said so.
+//
+// The fix is a THIRD path rather than a relaxed gate - see defStream() below.
+// DEF stays out of upgrades() and risers() so the character of those lists is
+// unchanged: upgrades() would rank defences against the same half-sigma gate
+// it uses for skill players and crowd a four-row limit with them, and risers()
+// reads a usage mirror that covers four positions and has no DEF row at all.
 const NOT_WORTH_CLAIMING = new Set(["K", "DEF"]);
 const r1 = (v) => (v === null ? null : Math.round(v * 10) / 10);
 
@@ -222,18 +234,133 @@ const delta = (recent, season) => {
   return Math.round(((r - s) / s) * 1000) / 1000;
 };
 
+// THE STANDING DEFENCE, ALWAYS ANSWERED.
+//
+// Unlike upgrades(), this has NO gate. It reports the best free defence against
+// the one in the lineup every single load, including when the answer is "yours
+// is already better" - because the failure this exists to stop was not a missed
+// marginal call, it was a five-point gap sitting unexamined for weeks. A block
+// that only speaks when it has bad news teaches you nothing on the weeks it is
+// quiet, and you cannot tell quiet-because-fine from quiet-because-broken.
+//
+// WHAT THIS IS NOT. It is a PROJECTION gap, not a matchup read - and the reason
+// is NOT that matchup.js looked and found noise. matchup.js measures what a
+// defence CONCEDES to offensive positions; nothing anywhere on this page has
+// ever measured the offence a defence is about to face. The question was never
+// asked, rather than asked and answered, and the copy in ui.js says exactly
+// that. Do not restore the older, flattering version of this sentence.
+//
+// Missing is never zero here either: a starter the projections did not price
+// yields a null gap and says so, instead of making the free man look +10.
+export function defStream(L) {
+  if (!L?.priced || !L?.rostered || !Array.isArray(L.slots)) return null;
+
+  // The DEF seat, if this league starts one at all. A league with no DEF slot
+  // gets no row - not an empty one.
+  const seatIdx = L.slots.findIndex((slot) => canFill(slot, "DEF"));
+  if (seatIdx < 0) return null;
+  const slot = L.slots[seatIdx];
+
+  const raw = (L.starters || [])[seatIdx];
+  const empty = !raw || String(raw) === "0";
+  const current = empty ? null : (L.byId?.get(String(raw)) || null);
+  const unresolved = !empty && !current;
+
+  // Best free DEF by projection. Read off `priced` directly rather than through
+  // freeAgents(), which excludes the position by design.
+  //
+  // A LOCKED FREE DEFENCE IS NOT CLAIMABLE THIS WEEK. app.js stamps `locked` on
+  // every priced player once his game has kicked off, and upgrades() already
+  // refuses to point at a locked SEAT for exactly this reason - but the first
+  // version of this loop never checked the candidate, so on a Monday evening,
+  // when nearly every free defence has already played, the row would say
+  // "stream him" about a man Sleeper will not seat. Caught in audit.
+  let best = null, sawFree = false, anyPriced = false;
+  for (const cand of L.priced.values()) {
+    if (cand.pos !== "DEF") continue;
+    if (typeof cand.pts !== "number" || !Number.isFinite(cand.pts)) continue;
+    // "HAS THE FEED PUBLISHED DEFENCE NUMBERS" IS A QUESTION ABOUT THE WHOLE
+    // POSITION, not about the one defence this row happens to pick. Measured
+    // from `best` alone it was wrong the moment the locked filter landed: on a
+    // Monday evening where the only unlocked free defence is on a bye, that
+    // defence prices 0 and the page announced "Sleeper has not published
+    // defence projections for this week" about a feed that had published fine.
+    if (cand.pts > 0) anyPriced = true;
+    if (L.rostered.has(cand.id)) continue;
+    if (cand.startable === false) continue;
+    sawFree = true;
+    if (cand.locked) continue;
+    if (!best || cand.pts > best.pts) best = cand;
+  }
+  // Nothing priced at the position at all: no question, so no row.
+  if (!sawFree) return null;
+
+  const curRaw = empty ? 0 : n(current?.pts);
+  const cur = curRaw === null ? null : r1(curRaw);
+
+  // Free defences exist but every one of them has already played. Still a row,
+  // because "checked, and there is nothing you can do" is the answer - and a
+  // vanishing row is indistinguishable from a broken one.
+  if (!best) {
+    return { slot, best: null,
+      current: current ? { id: current.id, name: current.name, team: current.team,
+                           pts: cur, locked: !!current.locked } : null,
+      empty, unresolved, unprojected: !empty && !unresolved && curRaw === null,
+      allLocked: true, noProjections: false, gap: null, actionable: false };
+  }
+
+  const bestPts = r1(best.pts);
+  // ROUND ONCE, THEN SUBTRACT. The first version subtracted raw points and
+  // rounded the difference, while the copy prints both components rounded - so
+  // 10.24 against 5.25 rendered "10.2 against 5.3 - a gap of +5.0", arithmetic
+  // that does not close on the page. It also let the dead-heat branch fire on
+  // a non-tie, and produced a signed "+0.0" for a defence marginally BEHIND.
+  const gap = cur === null ? null : r1(bestPts - cur);
+
+  return {
+    slot,
+    best: { id: best.id, name: best.name, team: best.team, pts: bestPts,
+            opponent: best.opponent ?? null },
+    allLocked: false,
+    // The BEST free defence projecting zero is missing data, not a reading.
+    // rescore({}) returns 0 rather than null, so a week Sleeper has not
+    // published defence projections for prices every defence at 0 - and the
+    // dead-heat branch would call that "both project 0.0", a measurement claim
+    // over an empty feed.
+    noProjections: !anyPriced,
+    current: current
+      ? { id: current.id, name: current.name, team: current.team,
+          pts: cur, locked: !!current.locked }
+      : null,
+    empty,
+    unresolved,
+    // A starter the feed did not price. The gap is unknown, not favourable.
+    unprojected: !empty && !unresolved && curRaw === null,
+    gap,
+    // Only an actionable upgrade counts toward the header tally: "yours is
+    // fine" is information, not an item of work.
+    actionable: gap !== null && gap > 0 && !current?.locked && anyPriced,
+  };
+}
+
 // The whole block, ready to render. `any` is what the UI gates on - this
 // surface is silent unless one of the two questions has an answer.
 export function waiverBoard(L, { trending = new Map(), throughWeek = null } = {}) {
-  if (!L?.priced || !L?.rostered) return { any: false, upgrades: [], risers: [] };
+  if (!L?.priced || !L?.rostered) {
+    return { any: false, upgrades: [], risers: [], def: null };
+  }
   const free = freeAgents(L.priced, L.rostered, L.slots);
   const up = upgrades(free, L, 4);
   const ri = risers(free, { trending, throughWeek })
     .filter((p) => !up.some((u) => u.id === p.id));
+  const def = defStream(L);
   return {
-    any: up.length > 0 || ri.length > 0,
+    // The DEF row keeps the block alive on a week with nothing else in it -
+    // that is the whole point of it being ungated.
+    any: up.length > 0 || ri.length > 0 || !!def,
     upgrades: up.map((p) => ({ ...p, gap: r1(p.gap), gate: r1(p.gate) })),
     risers: ri,
+    def,
     freeCount: free.length,
   };
 }
