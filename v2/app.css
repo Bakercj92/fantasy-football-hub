@@ -1,0 +1,257 @@
+/* ===========================================================================
+   FANTASY FOOTBALL HUB - DESIGN SYSTEM
+   ===========================================================================
+
+   The old stylesheet had a colour token set and a type scale and nothing else.
+   No spacing scale, so every margin was a bespoke number; no card pattern, so
+   four different box treatments evolved independently; no layout system, so
+   everything was a 900px column. That is what reads as "random boxes" even
+   when each individual box is well made.
+
+   Three rules hold this together:
+     1. No bare values in component CSS. Every length is a --sp token, every
+        colour a --c token, every size a --s token.
+     2. ONE card. `.card` is the only container. Variants are modifier classes
+        on it, never new box types.
+     3. Emphasis is scarce. --c-act is the answer colour and nothing decorative
+        may use it: when everything is highlighted, nothing is.
+   ======================================================================== */
+
+:root{
+  /* --- colour ------------------------------------------------------------
+     Carried over from the original token set, which was already good, with
+     the names regularised and three additions the layout needs. */
+  --c-bg:#0B1017;
+  --c-surface:#141C28;
+  --c-raised:#1C2637;
+  --c-sunken:#0E141E;
+  --c-line:#28344A;
+  --c-line-soft:#1F2937;
+
+  --c-text:#EEF2F8;
+  --c-mute:#93A2B8;
+  --c-dim:#64748B;
+
+  --c-act:#F5C451;      /* the answer. Scarce on purpose. */
+  --c-act-fill:#332A0B;
+  --c-ok:#4ADE80;
+  --c-warn:#FB923C;
+  --c-bad:#F87171;
+
+  /* --- type ---------------------------------------------------------------
+     Unchanged ratios from the original, plus one step up for page titles,
+     which did not exist when every page was the same page. */
+  --s1:11px; --s2:12.5px; --s3:14px; --s4:16px; --s5:20px; --s6:25px;
+  --lh-tight:1.25; --lh:1.5; --lh-loose:1.65;
+
+  /* --- space --------------------------------------------------------------
+     NEW. A 4px base. Nothing in this file may invent a length. */
+  --sp1:4px; --sp2:8px; --sp3:12px; --sp4:16px; --sp5:24px; --sp6:32px; --sp7:48px;
+
+  /* --- shape + motion ---------------------------------------------------- */
+  --r:10px; --r-sm:6px; --r-pill:99px;
+  --rail:224px;
+  --content-max:1120px;
+  --nav-h:60px;          /* phone bottom nav */
+  --ease:cubic-bezier(.4,0,.2,1);
+}
+
+*{box-sizing:border-box}
+html,body{background:var(--c-bg)}
+body{margin:0;color:var(--c-text);
+  font:var(--s3)/var(--lh) -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Arial,sans-serif;
+  -webkit-font-smoothing:antialiased}
+button{font-family:inherit}
+a{color:inherit}
+
+/* ===========================================================================
+   SHELL
+   The shell is mounted ONCE and never re-rendered. Only [data-content] is
+   repainted, because app.js re-solves and repaints on every kickoff flip -
+   a full remount would scroll-jump mid-read at one o'clock on a Sunday,
+   which is the worst available moment.
+   ======================================================================== */
+
+.shell{min-height:100dvh}
+
+.topbar{position:sticky;top:0;z-index:30;
+  display:flex;align-items:center;gap:var(--sp3);
+  padding:var(--sp3) var(--sp4);
+  background:color-mix(in srgb,var(--c-bg) 88%,transparent);
+  backdrop-filter:blur(8px);
+  border-bottom:1px solid var(--c-line-soft)}
+.brand{font-size:var(--s4);font-weight:650;letter-spacing:-.01em;white-space:nowrap}
+.topbar .wk{margin-left:auto;font-size:var(--s2);color:var(--c-mute);white-space:nowrap}
+
+.body{display:block}
+
+/* --- desktop nav rail (hidden on phones) --- */
+.rail{display:none}
+
+/* --- content --- */
+.main{max-width:var(--content-max);margin:0 auto;
+  padding:var(--sp5) var(--sp4) calc(var(--nav-h) + var(--sp7))}
+.page-head{margin:0 0 var(--sp4)}
+.page-title{font-size:var(--s6);font-weight:650;letter-spacing:-.015em;margin:0}
+.page-sub{font-size:var(--s2);color:var(--c-mute);margin-top:var(--sp1)}
+
+/* --- phone bottom nav --- */
+.navbar{position:fixed;left:0;right:0;bottom:0;z-index:40;
+  display:grid;grid-auto-flow:column;grid-auto-columns:1fr;
+  height:calc(var(--nav-h) + env(safe-area-inset-bottom));
+  padding-bottom:env(safe-area-inset-bottom);
+  background:color-mix(in srgb,var(--c-surface) 94%,transparent);
+  backdrop-filter:blur(10px);
+  border-top:1px solid var(--c-line-soft)}
+.navbtn{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;
+  background:none;border:0;cursor:pointer;color:var(--c-dim);
+  font-size:var(--s1);font-weight:600;letter-spacing:.01em;
+  padding:0;transition:color .15s var(--ease)}
+.navbtn .ico{font-size:var(--s4);line-height:1}
+.navbtn[aria-current="page"]{color:var(--c-act)}
+.navbtn:hover{color:var(--c-text)}
+/* The soft Recap gate: reachable by URL every day, in the nav only Tue/Wed. */
+.navbtn[hidden]{display:none}
+
+/* ===========================================================================
+   LEAGUE SWITCHER
+   ======================================================================== */
+.leagues{display:flex;gap:var(--sp2);flex-wrap:wrap;margin-bottom:var(--sp4)}
+.lg{padding:var(--sp2) var(--sp4);border-radius:var(--r-pill);cursor:pointer;
+  background:var(--c-surface);border:1px solid var(--c-line-soft);color:var(--c-mute);
+  font-size:var(--s2);font-weight:600;transition:all .15s var(--ease)}
+.lg:hover{color:var(--c-text);border-color:var(--c-line)}
+.lg[aria-current="true"]{background:var(--c-raised);border-color:var(--c-act);color:var(--c-text)}
+
+/* ===========================================================================
+   STATUS STRIP
+   Not methodology. This is live per-load state - whether kickoff locking is
+   on, how stale the usage mirror is, whether the market layer arrived - and
+   it has to be on EVERY route, because it changes whether anything anywhere
+   on the page is trustworthy. Collapsed by default; a warning forces it open.
+   ======================================================================== */
+.status{margin:0 auto var(--sp4);max-width:var(--content-max)}
+.status summary{display:flex;align-items:center;gap:var(--sp2);cursor:pointer;
+  list-style:none;padding:var(--sp2) var(--sp3);
+  background:var(--c-sunken);border:1px solid var(--c-line-soft);border-radius:var(--r-sm);
+  font-size:var(--s2);color:var(--c-mute)}
+.status summary::-webkit-details-marker{display:none}
+.status summary:hover{border-color:var(--c-line);color:var(--c-text)}
+.status .dot{width:7px;height:7px;border-radius:50%;background:var(--c-ok);flex:none}
+.status.has-warn .dot{background:var(--c-warn)}
+.status.has-bad .dot{background:var(--c-bad)}
+.status .more{margin-left:auto;font-size:var(--s1);color:var(--c-dim)}
+.status .panel{padding:var(--sp3);border:1px solid var(--c-line-soft);border-top:0;
+  border-radius:0 0 var(--r-sm) var(--r-sm);background:var(--c-sunken)}
+.status .srow{font-size:var(--s2);color:var(--c-mute);padding:var(--sp1) 0}
+.status .srow b{color:var(--c-text);font-weight:600}
+.status .srow.warn{color:var(--c-warn)}
+.status .srow.bad{color:var(--c-bad)}
+
+/* ===========================================================================
+   THE CARD. The only container on this site.
+   ======================================================================== */
+.card{background:var(--c-surface);border:1px solid var(--c-line-soft);
+  border-radius:var(--r);padding:var(--sp4);margin-bottom:var(--sp4)}
+.card > h2{margin:0 0 var(--sp3);font-size:var(--s4);font-weight:650;
+  display:flex;align-items:baseline;gap:var(--sp2)}
+.card > h2 .ct{font-size:var(--s2);color:var(--c-dim);font-weight:500}
+.card.act{border-color:var(--c-act);background:var(--c-act-fill)}
+.card.warn{border-color:var(--c-warn)}
+.card.quiet{background:var(--c-sunken)}
+.card.flush{padding:0;overflow:hidden}
+.card.flush > h2{padding:var(--sp4) var(--sp4) var(--sp3)}
+
+.note{font-size:var(--s2);color:var(--c-mute);line-height:var(--lh-loose)}
+.stub{color:var(--c-dim);font-size:var(--s2);padding:var(--sp5) 0;text-align:center}
+
+/* ===========================================================================
+   TABLES
+   table-layout stays AUTO below 560px. app.css:220-253 in the original
+   records three measured fixed-layout fixes that all failed and a player-name
+   column that collapsed to 59px - a failure reintroduced twice already.
+   NEW IN v2: the 560-900px band. The original switched straight from the
+   phone rules to a laptop column set sized for ~900px, so at 765px it ran
+   laptop widths in a space too small for them and broke "Parker Washington"
+   mid-word. Measured 2026-10-13.
+   ======================================================================== */
+table{width:100%;border-collapse:collapse;table-layout:auto}
+th,td{text-align:left;padding:var(--sp3) var(--sp3);border-bottom:1px solid var(--c-line-soft);
+  font-size:var(--s3);vertical-align:baseline}
+tr:last-child td{border-bottom:0}
+thead td,thead th{font-size:var(--s1);letter-spacing:.06em;text-transform:uppercase;
+  color:var(--c-dim);font-weight:600;padding-top:var(--sp2);padding-bottom:var(--sp2)}
+.nm{font-weight:600}
+.nm .pos{margin-left:var(--sp2);font-size:var(--s1);color:var(--c-dim);font-weight:500}
+.num{text-align:right;font-variant-numeric:tabular-nums}
+.pt{text-align:right;font-variant-numeric:tabular-nums;font-weight:650}
+.slot{font-size:var(--s1);letter-spacing:.06em;color:var(--c-mute);font-weight:600;width:1%;
+  white-space:nowrap}
+tr.dead .nm,tr.dead .pt{color:var(--c-dim)}
+.bye{color:var(--c-warn)}
+.lock{margin-left:var(--sp1)}
+.kick{margin-left:var(--sp2);font-size:var(--s1);color:var(--c-dim);white-space:nowrap}
+
+/* Hybrid tables, phase 3: name + projection always visible, the rest folds.
+   The fold classes are defined here so the breakpoints live in one place.
+
+   FOLD ORDER IS BY VALUE, NOT BY WIDTH CONVENIENCE. Caught by rendering at
+   390px on 2026-10-13: the first cut folded Opp (620px) BEFORE Tm (460px), so
+   a phone kept a three-letter team code and lost the bye flag, the kickoff
+   time and the lock icon - the three things that decide whether a lineup
+   change is even possible. Opp does not fold at all. */
+@media(max-width:860px){ .fold-lg{display:none} }   /* VOR - the compare tool says it better */
+@media(max-width:620px){ .fold-md{display:none} }   /* Tm  - the opponent implies it */
+@media(max-width:460px){ .fold-sm{display:none} }   /* Opp - its payload moves to .nmark */
+.opp{white-space:nowrap}
+/* The folded opponent's payload, inline with the name. Hidden until the
+   column it stands in for is actually gone, so nothing is said twice. */
+.nmark{display:none;margin-left:var(--sp2);font-size:var(--s1)}
+@media(max-width:460px){ .nmark{display:inline} }
+
+/* ===========================================================================
+   DESKTOP: two panes.
+   Below this width the rail is replaced by the bottom nav. 900px is where the
+   rail plus a readable content column stops fitting.
+   ======================================================================== */
+@media(min-width:900px){
+  .body{display:grid;grid-template-columns:var(--rail) minmax(0,1fr);
+    align-items:start}
+  .rail{display:block;position:sticky;top:var(--sp7);
+    padding:var(--sp5) var(--sp3) var(--sp5) var(--sp4)}
+  .railbtn{display:flex;align-items:center;gap:var(--sp3);width:100%;
+    padding:var(--sp2) var(--sp3);margin-bottom:var(--sp1);
+    background:none;border:0;border-radius:var(--r-sm);cursor:pointer;
+    color:var(--c-mute);font-size:var(--s3);font-weight:550;text-align:left;
+    transition:all .15s var(--ease)}
+  .railbtn .ico{font-size:var(--s4);width:20px;text-align:center;flex:none}
+  .railbtn:hover{background:var(--c-surface);color:var(--c-text)}
+  .railbtn[aria-current="page"]{background:var(--c-raised);color:var(--c-act)}
+  .railbtn[hidden]{display:none}
+  .rail .sect{font-size:var(--s1);letter-spacing:.08em;text-transform:uppercase;
+    color:var(--c-dim);padding:var(--sp4) var(--sp3) var(--sp2);font-weight:600}
+  .navbar{display:none}
+  .main{padding:var(--sp5) var(--sp5) var(--sp7);margin:0}
+  .status{margin-left:0}
+  /* Content spreads rather than stretching one column to 1100px.
+     MEASURED 2026-10-13: minmax(340px) put two tables side by side at 1024px
+     and handed the player-name column 133px - LESS than the 340px it gets on
+     a tablet, and "Starting Quarterback" wrapped. A desktop that is worse
+     than a phone is the Phase-3a failure wearing a different hat.
+     520px is the floor at which a six-column table still reads, so the split
+     happens only when there is genuinely room for two of them. */
+  .cols{display:grid;gap:var(--sp4);grid-template-columns:repeat(auto-fit,minmax(520px,1fr));
+    align-items:start}
+}
+@media(min-width:1280px){ :root{--rail:248px} }
+
+.loading,.err{max-width:640px;margin:var(--sp7) auto;padding:var(--sp5);text-align:center;
+  color:var(--c-mute);font-size:var(--s3)}
+.err{text-align:left;border:1px solid var(--c-bad);border-radius:var(--r);background:var(--c-surface)}
+.err b{color:var(--c-text)}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:var(--s2);color:var(--c-dim)}
+.spin{display:inline-block;width:12px;height:12px;margin-right:var(--sp2);
+  border:2px solid var(--c-line);border-top-color:var(--c-act);border-radius:50%;
+  animation:spin .7s linear infinite;vertical-align:-1px}
+@keyframes spin{to{transform:rotate(360deg)}}
+@media(prefers-reduced-motion:reduce){*{animation-duration:.01ms!important;transition-duration:.01ms!important}}
