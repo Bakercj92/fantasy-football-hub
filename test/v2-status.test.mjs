@@ -43,10 +43,34 @@ t("clubs are named while they fit in a reader's head, counted past that", () => 
   assert.match(many.rows.find((r) => r.key === "usage").text, /5 clubs/);
 });
 
-t("a mirror behind upstream warns", () => {
-  const m = statusModel({ ...healthy(), usageFresh: { behind: true } });
+t("A FOUR-MINUTE LAG IS NOT A WARNING", () => {
+  // Seen live 2026-10-13: mirrored 16:54:07, upstream published 16:58:45.
+  // checkFreshness sets `behind` on any difference at all, and the first cut
+  // warned on all of it - a warning that fires on a four-minute lag is one
+  // nobody reads by week 10.
+  const m = statusModel({ ...healthy(), usageFresh: { behind: true, hours: 0 } });
+  assert.strictEqual(m.level, "ok");
+  assert.match(m.rows.find((r) => r.key === "usage").text, /Current/);
+});
+
+t("hours behind warns, in hours", () => {
+  const m = statusModel({ ...healthy(), usageFresh: { behind: true, hours: 5 } });
   assert.strictEqual(m.level, "warn");
-  assert.match(m.rows.find((r) => r.key === "usage").text, /newer data since/);
+  assert.match(m.rows.find((r) => r.key === "usage").text, /5 hours behind/);
+});
+
+t("days behind warns in days, and says what to do", () => {
+  const m = statusModel({ ...healthy(), usageFresh: { behind: true, hours: 50 } });
+  assert.strictEqual(m.level, "warn");
+  const t2 = m.rows.find((r) => r.key === "usage").text;
+  assert.match(t2, /2 days behind/);
+  assert.match(t2, /refresh the mirror/);
+});
+
+t("not behind at all says nothing about staleness", () => {
+  const m = statusModel({ ...healthy(), usageFresh: { behind: false } });
+  assert.strictEqual(m.level, "ok");
+  assert.ok(!/behind|Current/.test(m.rows.find((r) => r.key === "usage").text));
 });
 
 t("no usage layer at all hides the metrics rather than guessing", () => {

@@ -24,6 +24,26 @@ const listAnd = (xs) => (xs.length <= 1 ? (xs[0] || "")
 
 const RANK = { ok: 0, warn: 1, bad: 2 };
 
+// HOW FAR BEHIND IS WORTH SAYING.
+//
+// checkFreshness() sets `behind` on ANY difference - `upstream > mirrored` -
+// and the first version warned on all of it. Seen live on 2026-10-13: the
+// mirror was built at 16:54:07 and nflverse published at 16:58:45, four
+// minutes later. The strip reported "nflverse has published newer data
+// since", which is true and reads like a week-old mirror.
+//
+// A warning that fires on a four-minute lag is a warning nobody reads by
+// week 10. Under an hour the mirror is current and says so; past that it says
+// how far behind, in units a reader can act on.
+function staleness(fresh) {
+  if (!fresh?.behind) return { warn: false, note: "" };
+  const h = fresh.hours ?? 0;
+  if (h < 1) return { warn: false, note: "Current — upstream moved minutes after this build." };
+  if (h < 24) return { warn: true, note: `<b>${h} hour${h > 1 ? "s" : ""} behind upstream.</b>` };
+  const d = Math.round(h / 24);
+  return { warn: true, note: `<b>${d} day${d > 1 ? "s" : ""} behind upstream.</b> Ask Claude to refresh the mirror.` };
+}
+
 export function statusModel(state, L = null) {
   const rows = [];
 
@@ -58,7 +78,6 @@ export function statusModel(state, L = null) {
     rows.push({ level: "warn", key: "usage",
       text: `<b>No usage layer this load.</b> Snap share, touches and target share are hidden rather than guessed.` });
   } else {
-    const behind = state.usageFresh?.behind;
     const short = state.unfiled;
     let text = `<b>Usage through week ${u.throughWeek}</b>, mirrored from nflverse`;
     if (u.generatedAt) text += ` on ${String(u.generatedAt).slice(0, 10)}`;
@@ -66,8 +85,9 @@ export function statusModel(state, L = null) {
     if (short?.length) {
       text += ` ${short.length <= NAME_CLUBS_UPTO ? listAnd(short) : `${short.length} clubs`} ${short.length === 1 ? "has" : "have"} not filed week ${u.throughWeek} yet.`;
     }
-    rows.push({ level: behind ? "warn" : "ok", key: "usage",
-      text: behind ? `${text} <b>nflverse has published newer data since.</b>` : text });
+    const lag = staleness(state.usageFresh);
+    rows.push({ level: lag.warn ? "warn" : "ok", key: "usage",
+      text: lag.note ? `${text} ${lag.note}` : text });
   }
 
   // --- the market layer ---------------------------------------------------
