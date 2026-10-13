@@ -125,9 +125,27 @@ function lineupPage(L) {
 const DEST = { call: "lineup", signal: "lineup", claim: "wire", def: "wire",
                "def-quiet": "wire", vacancy: "wire", promotion: "wire", riser: "wire" };
 
+// Where a GROUP points. Not the first visible item's kind: a watch card of
+// three signals and five hidden wire rows sent "5 more" to the lineup page.
+// The majority kind across everything the group holds, with the hidden rows
+// deciding their own link.
+function destOf(kinds, fallback = "lineup") {
+  const tally = {};
+  for (const k of kinds || []) {
+    const d = DEST[k];
+    if (d) tally[d] = (tally[d] || 0) + 1;
+  }
+  const best = Object.entries(tally).sort((a, b) => b[1] - a[1])[0];
+  return best ? best[0] : fallback;
+}
+
 const tag = (text, cls = "") => `<span class="tag ${cls}">${esc(text)}</span>`;
 
-function itemLine(it) {
+// Exported for test only, on the same reasoning ui.js:269-273 gives for
+// defRow: every branch here is copy, copy is what this project's render layer
+// has actually caught, and asserting the text of all nine branches is cheap in
+// node and needs no browser. One of them crashed the entire page in review.
+export function itemLine(it) {
   switch (it.kind) {
     case "call":
       return it.forced
@@ -140,8 +158,17 @@ function itemLine(it) {
         it.over ? `over ${esc(it.over.name)}` : `into your empty ${esc(it.slot)}`}`,
         tag(sgn(it.gap), it.gap > 0 ? "good" : "")];
     case "def":
-      return [`<b>Stream ${esc(it.verdict.best.name)}</b> over ${esc(it.verdict.current.name)} at DEF`,
-        tag(sgn(it.gap), it.gap > 0 ? "good" : "")];
+      // AN EMPTY DEF SEAT HAS NO `current`. waivers.js:274 sets it null by
+      // construction when the seat is empty, and `counts` stays true there
+      // (`!current?.locked` is `!undefined`), so this row really does arrive
+      // with current === null - and reading `.name` off it threw, replacing
+      // the whole page with the error screen. Precisely the failure
+      // defence.js's `requires` ladder was built to stop, one layer up.
+      return it.verdict.kind === "empty"
+        ? [`<b>Stream ${esc(it.verdict.best.name)}</b> into your empty DEF seat`,
+           tag(sgn(it.gap), it.gap > 0 ? "good" : "")]
+        : [`<b>Stream ${esc(it.verdict.best.name)}</b> over ${esc(it.verdict.current.name)} at DEF`,
+           tag(sgn(it.gap), it.gap > 0 ? "good" : "")];
     case "def-quiet":
       return [`Defence seat checked &mdash; ${esc(defQuietPhrase(it.verdict))}`, tag("ok")];
     case "signal":
@@ -149,13 +176,11 @@ function itemLine(it) {
         esc(it.flag.text)}`, tag(it.flag.severity === "high" ? "check" : "watch",
         it.flag.severity === "high" ? "warn" : "")];
     case "vacancy":
-      return [`<b>${esc(it.row.nm)}</b> <span class="pos">${esc(it.row.tm)} ${esc(it.row.pos)}${
-        it.row.rk}</span> &mdash; behind ${esc(it.row.over.nm)}`,
+      return [`<b>${esc(it.row.nm)}</b> <span class="pos">${esc(it.row.tm)} ${esc(it.row.pos)}${esc(it.row.rk)}</span> &mdash; behind ${esc(it.row.over.nm)}`,
         tag(it.row.over.tier === "confirmed" ? "confirmed" : "watch",
             it.row.over.tier === "confirmed" ? "warn" : "")];
     case "promotion":
-      return [`<b>${esc(it.row.nm)}</b> <span class="pos">${esc(it.row.tm)} ${esc(it.row.pos)}${
-        it.row.rk}</span> &mdash; moved up ${it.row.climb}`, tag("depth")];
+      return [`<b>${esc(it.row.nm)}</b> <span class="pos">${esc(it.row.tm)} ${esc(it.row.pos)}${esc(it.row.rk)}</span> &mdash; moved up ${esc(it.row.climb)}`, tag("depth")];
     case "riser":
       return [`<b>${esc(it.player.name)}</b> <span class="pos">${esc(it.player.pos)}</span> &mdash; being added fast`,
         tag("trending")];
@@ -177,14 +202,22 @@ function defQuietPhrase(v) {
 function todayPage(state) {
   const m = todayModel(state, { now: state.now, day: state.day ?? new Date().getDay() });
 
-  if (m.quiet) {
-    return `<section class="card quiet">
+  // A WEEK WITH NOTHING TO DO BUT SOMETHING TO READ IS NOT A BLANK PAGE.
+  // `quiet` is only true when there are no classes at all, so a watch-only
+  // week rendered as one closed fold and nothing else - no chevron, no visible
+  // body, just a heading. The all-quiet card is shown whenever nothing is
+  // ACTIONABLE, and the fold rides underneath it.
+  const actionable = m.classes.filter((c) => c.key !== "watch");
+  if (m.quiet || actionable.length === 0) {
+    const quietCard = `<section class="card quiet">
       <div class="stub"><b>Nothing to do in any league.</b></div>
-      <div class="note">Checked all three: lineups solve to what you are already running, no free
-      agent beats a starter, and no depth chart moved under anyone you own.
+      <div class="note">Checked ${m.checked.length === 1 ? "it" : `all ${m.checked.length}`}: lineups
+      solve to what you are already running, no free agent beats a starter, and no depth chart
+      moved under anyone you own.
       ${m.checked.map((c) => `<br>${esc(c.name)} &mdash; ${c.wire} on the wire worth a look${
-        c.faabLeft === null ? "" : `, $${c.faabLeft} FAAB left`}.`).join("")}</div>
+        c.faabLeft === null ? "" : `, $${esc(c.faabLeft)} FAAB left`}.`).join("")}</div>
     </section>`;
+    return quietCard + m.classes.map(renderClass).join("");
   }
 
   // THE ADVISORY CLASS IS FOLDED, AND THE ACTIONABLE ONES ARE NOT.
@@ -199,20 +232,23 @@ function todayPage(state) {
       <div class="cols">
         ${c.leagues.map((g) => `
           <div class="card lgcard">
-            <h2><a class="lglink" href="${href(DEST[g.items[0].kind] || "lineup", g.key)}">${
+            <h2><a class="lglink" href="${href(destOf(g.kinds), g.key)}">${
               esc(g.name)}</a> <span class="ct">${g.total}</span></h2>
             ${g.items.map((it) => {
               const [text, chip] = itemLine(it);
               return `<a class="tline" href="${href(DEST[it.kind] || "lineup", g.key)}">
                 <span class="tl">${text}</span>${chip}</a>`;
             }).join("")}
-            ${g.more ? `<a class="tline more" href="${href(DEST[g.items[0].kind] || "wire", g.key)}">
+            ${g.more ? `<a class="tline more" href="${href(destOf(g.hiddenKinds.length ? g.hiddenKinds : g.kinds), g.key)}">
               <span class="tl">${g.more} more</span>${tag("open")}</a>` : ""}
           </div>`).join("")}
       </div>`;
 
-  return m.classes.map((c) => c.key === "watch"
-    ? `<details class="clsx fold">
+  return m.classes.map(renderClass).join("");
+
+  function renderClass(c) {
+    return c.key === "watch"
+    ? `<details class="clsx" data-fold="watch">
         <summary class="clsh">${esc(c.label)} <span class="ct">${c.count}</span>
           <span class="more">nothing to do &mdash; open if you want it</span></summary>
         <div class="note clssub">${esc(c.sub)}</div>
@@ -225,7 +261,7 @@ function todayPage(state) {
       <div class="cols">
         ${c.leagues.map((g) => `
           <div class="card lgcard">
-            <h2><a class="lglink" href="${href(DEST[g.items[0].kind] || "lineup", g.key)}">${
+            <h2><a class="lglink" href="${href(destOf(g.kinds), g.key)}">${
               esc(g.name)}</a> <span class="ct">${g.total}</span></h2>
             ${g.items.map((it) => {
               const [text, chip] = itemLine(it);
@@ -234,7 +270,8 @@ function todayPage(state) {
             }).join("")}
           </div>`).join("")}
       </div>
-    </section>`).join("");
+    </section>`;
+  }
 }
 
 const stub = (what, phase) => `

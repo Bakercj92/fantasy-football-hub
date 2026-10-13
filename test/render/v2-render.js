@@ -422,6 +422,64 @@ const ok = (name, cond, detail = "") => {
     await browser.close(); server.close();
   }
 
+  // ---- 8. the phase-2 audit fixes ----------------------------------------
+  console.log("\nPHASE 2 AUDIT FIXES");
+  {
+    const { page, browser, server } = await open({ width: 1280, height: 1000, hash: "#/today" });
+    // The fold must survive the repaint storm: paint() fires on consensus,
+    // three fcalc attachments, trending and the freshness check.
+    await page.evaluate(() => {
+      document.querySelector('details[data-fold="watch"]').open = true;
+    });
+    for (let i = 0; i < 3; i++) {
+      await page.evaluate(() => window.__ffh_repaint());
+      await page.waitForTimeout(80);
+    }
+    const stillOpen = await page.evaluate(() =>
+      document.querySelector('details[data-fold="watch"]').open);
+    ok("an opened fold survives repeated repaints", stillOpen === true);
+
+    const dests = await page.evaluate(() => {
+      const out = [];
+      for (const card of document.querySelectorAll(".lgcard")) {
+        const more = card.querySelector(".tline.more");
+        if (!more) continue;
+        out.push({ more: more.getAttribute("href"),
+                   rows: [...card.querySelectorAll(".tline:not(.more)")].map((a) => a.getAttribute("href")) });
+      }
+      return out;
+    });
+    ok("'N more' never points somewhere no hidden row lives",
+      dests.every((d) => /^#\/[a-z]+\/(wire|lineup)$/.test(d.more)), JSON.stringify(dests).slice(0, 220));
+
+    const focus = await page.evaluate(() => {
+      const a = document.querySelector(".tline");
+      a.focus();
+      const st = getComputedStyle(a, ":focus-visible");
+      return { focused: document.activeElement === a, outline: st.outlineWidth };
+    });
+    ok("rows are keyboard focusable", focus.focused === true);
+
+    const dupes = await page.evaluate(() => {
+      const name = (el) => (el.querySelector("b")?.textContent || "").trim();
+      const act = new Set();
+      for (const sec of document.querySelectorAll("section.clsx"))
+        for (const r of sec.querySelectorAll(".tline")) act.add(name(r));
+      const watch = [];
+      for (const d of document.querySelectorAll("details.clsx"))
+        for (const r of d.querySelectorAll(".tline:not(.more)")) watch.push(name(r));
+      return watch.filter((n) => n && act.has(n));
+    });
+    ok("nobody is told to sit above a heading that says nothing to do",
+      dupes.length === 0, `duplicated: ${dupes.join(", ")}`);
+
+    const leaked = await page.evaluate(() =>
+      /\bundefined\b|\bNaN\b|\[object Object\]/.test(document.querySelector("[data-content]").textContent));
+    ok("no placeholder leaked into the copy", leaked === false);
+    await page.screenshot({ path: path.join(SHOTS, "v2-today-desktop.png"), fullPage: true });
+    await browser.close(); server.close();
+  }
+
   console.log(`\nv2 render: ${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });

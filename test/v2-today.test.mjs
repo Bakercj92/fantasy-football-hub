@@ -3,6 +3,7 @@
 import assert from "node:assert";
 import { todayModel, callDeadline, claimsLead, waiverDay, LOCK_SOON_MS, WAIVER_DAY, WATCH_PER_LEAGUE }
   from "../v2/logic/today.js";
+import { itemLine } from "../v2/pages.js";
 
 let pass = 0, fail = 0;
 const t = (name, fn) => { try { fn(); pass++; } catch (e) { fail++; console.error(`FAIL  ${name}\n      ${e.message}`); } };
@@ -188,6 +189,148 @@ t("the actionable classes are never capped - everything there is worth doing", (
   const c = cls(todayModel(stateOf(L), { now: NOW, day: 0 }), "lineup");
   assert.strictEqual(c.leagues[0].items.length, 7);
   assert.strictEqual(c.leagues[0].more, 0);
+});
+
+// --------------------------------------------------------------------------
+// The defects the phase-2 audit blocked on.
+// --------------------------------------------------------------------------
+
+t("AN EMPTY DEF SEAT HAS NO `current`, and rendering it must not throw", () => {
+  // waivers.js:274 sets current null by construction when the seat is empty,
+  // and counts stays true there because `!current?.locked` is `!undefined`.
+  // Reading `.name` off it replaced the entire page with the error screen.
+  const def = { slot: "DEF", empty: true, current: null,
+                best: { name: "Kansas City", pts: 9.2 }, gap: 9.2, counts: true };
+  const L = league("joop", "Joop", { waivers: { any: true, upgrades: [], risers: [], def } });
+  const c = cls(todayModel(stateOf(L), { now: NOW, day: 0 }), "claims");
+  assert.strictEqual(c.count, 1, "an empty seat is work");
+  const it = c.leagues[0].items[0];
+  assert.strictEqual(it.verdict.kind, "empty");
+  const [text] = itemLine(it);
+  assert.match(text, /empty DEF seat/);
+  assert.match(text, /Kansas City/);
+});
+
+t("every item kind renders without throwing, including the thin ones", () => {
+  const kinds = [
+    { kind: "call", forced: true, out: { name: "A", injury: "Out" }, in: null, delta: -9 },
+    { kind: "call", forced: false, in: { name: "B" }, out: null, delta: 5 },
+    { kind: "claim", player: { name: "C" }, over: null, slot: "RB", gap: 3 },
+    { kind: "def", verdict: { kind: "actionable", best: { name: "KC" }, current: { name: "LV" } }, gap: 5 },
+    { kind: "def-quiet", verdict: { kind: "tie" } },
+    { kind: "signal", player: { name: "D", pos: "WR" }, flag: { severity: "high", text: "no usage" } },
+    { kind: "vacancy", row: { nm: "E", tm: "KC", pos: "RB", rk: 2, over: { nm: "F", tier: "confirmed" } } },
+    { kind: "promotion", row: { nm: "G", tm: "BUF", pos: "TE", rk: 1, climb: 2 } },
+    { kind: "riser", player: { name: "H", pos: "WR" } },
+  ];
+  for (const it of kinds) {
+    const [text, chip] = itemLine(it);
+    assert.ok(typeof text === "string" && text.length, `${it.kind} produced no text`);
+    assert.ok(!/undefined|null|NaN/.test(text), `${it.kind} leaked a placeholder: ${text}`);
+    assert.ok(typeof chip === "string", `${it.kind} produced no chip`);
+  }
+});
+
+t("THE `counts` TERM IS LOAD-BEARING and is actually tested now", () => {
+  // The previous test of this name passed with the term deleted, because its
+  // fixture also failed the kind gate. This one is actionable BY KIND and
+  // quiet by `counts`, so only the term can reject it.
+  const def = { slot: "DEF", current: { name: "LV", pts: 8.9 }, best: { name: "KC", pts: 9.2 },
+                gap: 0.3, actionable: true, counts: false };
+  const L = league("joop", "Joop", { waivers: { any: true, upgrades: [], risers: [], def } });
+  const m = todayModel(stateOf(L), { now: NOW, day: 0 });
+  assert.strictEqual(cls(m, "claims"), undefined, "counts:false is not work, whatever the kind says");
+  assert.strictEqual(cls(m, "watch").count, 1);
+});
+
+t("A PLAYER IS NAMED ONCE. No 'sit him' above 'nothing to do' about him.", () => {
+  const hurt = P("hurt", { startable: false, injury: "Out",
+    flags: [{ severity: "high", kind: "absent", text: "did not play last week" }] });
+  const L = league("joop", "Joop", {
+    calls: { actionable: true, entering: [P("in")], leaving: [hurt], forced: [1], gain: 10 },
+    optimal: [{ slot: "FLEX", player: hurt }], roster: [hurt],
+  });
+  const m = todayModel(stateOf(L), { now: NOW, day: 0 });
+  assert.strictEqual(cls(m, "lineup").count, 1);
+  assert.strictEqual(cls(m, "watch"), undefined, "he is already named in a call");
+});
+
+t("a riser already being claimed is not also a watch item", () => {
+  const guy = { id: "r1", name: "R1", pos: "WR", gap: 4, slot: "RB" };
+  const L = league("joop", "Joop", {
+    waivers: { any: true, upgrades: [guy], risers: [guy], def: null } });
+  const m = todayModel(stateOf(L), { now: NOW, day: 0 });
+  assert.strictEqual(cls(m, "claims").count, 1);
+  assert.strictEqual(cls(m, "watch"), undefined);
+});
+
+t("THE SORT IS SIGNED: a -8 pairing never outranks a +7 one", () => {
+  const L = league("joop", "Joop", {
+    calls: { actionable: true,
+      entering: [P("good", { pts: 17 }), P("bad", { pts: 2 })],
+      leaving: [P("x", { pts: 10 }), P("y", { pts: 10 })], forced: [], gain: 7 },
+  });
+  const items = cls(todayModel(stateOf(L), { now: NOW, day: 0 }), "lineup").leagues[0].items;
+  assert.strictEqual(items[0].delta, 7);
+  assert.strictEqual(items[1].delta, -8);
+});
+
+t("'N more' points where the HIDDEN rows live, not where the first visible one does", () => {
+  const sigs = Array.from({ length: 3 }, (_, i) => ({
+    id: `s${i}`, name: `S${i}`, pos: "WR",
+    flags: [{ severity: "high", kind: "thin", text: "one game", sigmas: 3 - i }] }));
+  const risers = Array.from({ length: 5 }, (_, i) => ({ id: `r${i}`, name: `R${i}`, pos: "WR" }));
+  const L = league("joop", "Joop", {
+    optimal: sigs.map((p) => ({ slot: "WR", player: p })), roster: sigs,
+    waivers: { any: true, upgrades: [], risers, def: null },
+  });
+  const g = cls(todayModel(stateOf(L), { now: NOW, day: 0 }), "watch").leagues[0];
+  assert.deepStrictEqual(g.items.map((i) => i.kind), ["signal", "signal", "signal", "riser"]);
+  assert.deepStrictEqual(g.hiddenKinds, ["riser"], "everything behind the fold is a wire item");
+});
+
+t("the signals the cap dropped are counted in 'more', not lost", () => {
+  const many = Array.from({ length: 9 }, (_, i) => ({
+    id: `s${i}`, name: `S${i}`, pos: "WR",
+    flags: [{ severity: "high", kind: "thin", text: "one game", sigmas: i }] }));
+  const L = league("joop", "Joop", { optimal: [], roster: many });
+  const g = cls(todayModel(stateOf(L), { now: NOW, day: 0 }), "watch").leagues[0];
+  // signalRows caps at 5 before this model ever sees them; 9 flagged players
+  // must still be reported as 9.
+  assert.strictEqual(g.total, 9, `reported ${g.total}`);
+  assert.strictEqual(g.items.length, WATCH_PER_LEAGUE);
+  assert.strictEqual(g.more, 9 - WATCH_PER_LEAGUE);
+});
+
+t("THE MODEL CARRIES NO AGGREGATE POINTS FIELD, at any level", () => {
+  const L = league("joop", "Joop", {
+    calls: { actionable: true, entering: [P("a")], leaving: [P("b")], forced: [], gain: 12 } });
+  const m = todayModel(stateOf(L), { now: NOW, day: 0 });
+  // The real property: every number the MODEL exposes above item level is a
+  // whole count of items. A points aggregate would be fractional and would not
+  // equal the number of things on screen. `total`, `count`, `shown` and `more`
+  // are counts; nothing summed a projection to get them.
+  const banned = /^(points|pts|score|sum|net|gain|value|delta)$/i;
+  for (const c of m.classes) {
+    for (const [k, v] of Object.entries(c)) {
+      assert.ok(!banned.test(k), `class.${k} looks like a points aggregate`);
+      if (typeof v === "number") assert.ok(Number.isInteger(v), `class.${k} = ${v} is not a count`);
+    }
+    for (const g of c.leagues) {
+      for (const [k, v] of Object.entries(g)) {
+        assert.ok(!banned.test(k), `group.${k} looks like a points aggregate`);
+        if (typeof v === "number") assert.ok(Number.isInteger(v), `group.${k} = ${v} is not a count`);
+      }
+      assert.strictEqual(g.total, g.items.length + g.more, "the count must describe the items");
+    }
+  }
+  // And the per-item numbers never leave their own league group.
+  assert.ok(m.classes.every((c) => c.leagues.every((g) => g.items.every((i) => i.league === undefined))),
+    "an item must not carry a cross-league key");
+});
+
+t("the cap is pinned to a value, not to itself", () => {
+  assert.strictEqual(WATCH_PER_LEAGUE, 4);
 });
 
 console.log(`v2 today: ${pass} passed, ${fail} failed`);

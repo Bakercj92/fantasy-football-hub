@@ -37,12 +37,19 @@ export const LOCK_SOON_MS = 2 * 60 * 60 * 1000;
 // ---------------------------------------------------------------------------
 // WHICH DAY CLAIMS PROCESS.
 //
-// Sleeper's `waiver_day_of_week` numbering is NOT generally resolved - checked
-// 2026-10-13. Value 2 is measured as Wednesday, and all three of Chris's
-// leagues are 2, which agrees with the hub's own existing copy ("Wednesday -
-// claims process today"). Nothing else is evidenced, so nothing else is
-// claimed: an unmapped value yields null and the class is labelled for what is
-// certain ("On the wire") rather than asserting a day it cannot prove.
+// Sleeper's `waiver_day_of_week` numbering is NOT generally resolved. Value 2
+// is MEASURED as Wednesday, from Chris's own transaction history rather than
+// from a published mapping: completed waiver transactions across weeks 2-5 in
+// all three leagues (all set to 2) land at Wednesday 03:00 America/New_York -
+// 33, 26 and 21 of them, against scattered singles on other days that are
+// post-clear free-agent adds. Checked 2026-10-13 via
+// api.sleeper.com/v1/league/<id>/transactions/<week>, reading `status_updated`
+// on `type: "waiver", status: "complete"`.
+//
+// Nothing else is evidenced, so nothing else is claimed: an unmapped value
+// yields null and the class is labelled for what is certain ("On the wire")
+// rather than asserting a day it cannot prove. To settle another value, run
+// the same query on a league that uses it.
 //
 // JS getDay(): 0 Sun .. 6 Sat.
 // ---------------------------------------------------------------------------
@@ -88,9 +95,13 @@ function lineupItems(L) {
     in: pair.in,
     out: pair.out,
     deadline: callDeadline(pair),
-    // Forced first, then by size. Both are projected points for THIS week in
-    // THIS league, so they are comparable to each other and to nothing else.
-    sort: [pair.forced ? 0 : 1, -Math.abs(pair.delta ?? 0)],
+    // Forced first, then by size - SIGNED, not absolute. pairCalls pairs a
+    // descending `entering` against an ascending `leaving` by index, so a
+    // net-positive set diff can still throw off a negative pair; ranking by
+    // magnitude put a -8 pairing above a +7 one. Both numbers are projected
+    // points for THIS week in THIS league, comparable to each other and to
+    // nothing else.
+    sort: [pair.forced ? 0 : 1, -(pair.delta ?? 0)],
   }));
 }
 
@@ -115,9 +126,25 @@ function claimItems(L) {
   return items;
 }
 
-function watchItems(L) {
+// Ids already named by an actionable class in this league. A player the page
+// has just told you to sit must not reappear one screen down under a heading
+// that says "Nothing to do" - and he does, systematically: signals.js fires a
+// high-severity `absent` flag for a projected player who missed the last
+// completed week, which is frequently the very player the forced call is about.
+function actionableIds(L) {
+  const ids = new Set();
+  const add = (p) => p?.id && ids.add(String(p.id));
+  for (const pair of L?.calls?.actionable ? pairCalls(L.calls) : []) { add(pair.in); add(pair.out); }
+  for (const u of L?.waivers?.upgrades || []) { add(u); add(u.over); }
+  return ids;
+}
+
+function watchItems(L, { exclude = new Set() } = {}) {
   const out = [];
-  for (const { p, f } of signalRows(L?.optimal, L?.roster).shown) {
+  const sig = signalRows(L?.optimal, L?.roster);
+  let dropped = sig.rest;
+  for (const { p, f } of sig.shown) {
+    if (exclude.has(String(p.id))) continue;
     out.push({ kind: "signal", player: p, flag: f, sort: [0, 0] });
   }
   const v = L?.vacancies;
@@ -125,13 +152,20 @@ function watchItems(L) {
     for (const row of v.vacancies || []) out.push({ kind: "vacancy", row, sort: [1, 0] });
     for (const row of v.promotions || []) out.push({ kind: "promotion", row, sort: [2, 0] });
   }
-  for (const r of L?.waivers?.risers || []) out.push({ kind: "riser", player: r, sort: [3, 0] });
+  for (const r of L?.waivers?.risers || []) {
+    if (exclude.has(String(r.id))) continue;
+    out.push({ kind: "riser", player: r, sort: [3, 0] });
+  }
   // A defence seat that was checked and is fine is worth one quiet line - the
   // whole reason that row is ungated is that "nothing to do" is a result.
   const d = defVerdict(L?.waivers?.def);
   if (d && !(DEF_ACTIONABLE_KINDS.has(d.kind) && L.waivers.def.counts)) {
     out.push({ kind: "def-quiet", verdict: d, sort: [4, 0] });
   }
+  // signalRows caps at SIGNALS_MAX and reports the remainder. Those were never
+  // items here, so they have to be carried separately or the "N more" link
+  // understates by exactly the signals the cap dropped.
+  out.droppedSignals = dropped;
   return out;
 }
 
@@ -170,15 +204,22 @@ export function todayModel(state, { now = Date.now(), day = new Date().getDay() 
 
   for (const L of leagues) {
     const key = L.entry.key, name = L.entry.name;
-    const push = (bucket, items) => {
+    const push = (bucket, items, extraHidden = 0) => {
       if (!items.length) return;
       const sorted = items.sort(bySort);
       const cap = UNCAPPED.has(bucket) ? sorted.length : WATCH_PER_LEAGUE;
+      const shown = sorted.slice(0, cap);
+      const hidden = sorted.slice(cap);
       buckets[bucket].push({
         key, name,
-        items: sorted.slice(0, cap),
-        more: Math.max(0, sorted.length - cap),
-        total: sorted.length,
+        items: shown,
+        // The kinds behind the fold decide where "N more" points. Using the
+        // FIRST VISIBLE item's kind sent a card of mostly-wire content to the
+        // lineup page.
+        hiddenKinds: [...new Set(hidden.map((i) => i.kind))],
+        kinds: [...new Set(sorted.map((i) => i.kind))],
+        more: hidden.length + extraHidden,
+        total: sorted.length + extraHidden,
       });
     };
 
@@ -194,7 +235,8 @@ export function todayModel(state, { now = Date.now(), day = new Date().getDay() 
     push("locking", soon);
     push("lineup", later);
     push("claims", claimItems(L));
-    push("watch", watchItems(L));
+    const watch = watchItems(L, { exclude: actionableIds(L) });
+    push("watch", watch, watch.droppedSignals || 0);
   }
 
   const lead = claimsLead(leagues, day);
@@ -204,11 +246,17 @@ export function todayModel(state, { now = Date.now(), day = new Date().getDay() 
 
   const claimsLabel = lead ? "Claims process today" : "On the wire";
   const META = {
-    locking: ["Locking soon", "These stop being possible when the game starts."],
+    // Narrowed deliberately: promotion into this class only ever moves LINEUP
+    // corrections, so the copy must not promise a property it does not apply
+    // to claims. Extending promotion to claims is a real option and is in the
+    // handoff, not silently assumed here.
+    locking: ["Locking soon", "Lineup changes that stop being possible when the game starts."],
     lineup: ["Lineup corrections", "Worth points, and no deadline before Sunday."],
-    claims: [claimsLabel, lead
-      ? "Bids are due before processing. Nothing here is ranked against the lineup calls above - a claim you might not win is not the same number as a swap you control."
-      : "Claimable any day. Ranked within a league by projection gap."],
+    // The second sentence is the page's own design, stated on every day rather
+    // than only on claims days - five days a week it was dropping the line
+    // that explains why nothing here is ranked against anything above it.
+    claims: [claimsLabel,
+      `${lead ? "Bids are due before processing." : "Claimable any day."} Upgrades first, ranked within a league by projection gap, then the standing defence seat. Nothing here is ranked against the lineup calls - a claim you might not win is not the same number as a swap you control.`],
     watch: ["Worth knowing", "Nothing to do. Read it or do not."],
   };
 

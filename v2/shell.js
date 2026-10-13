@@ -110,7 +110,26 @@ export function setRoute(route, { day } = {}) {
   el.sub.textContent = r.sub;
 }
 
-export function setContent(html) { el.content.innerHTML = html; }
+// THE SAME GUARD THE STATUS STRIP HAS, FOR THE SAME REASON.
+//
+// paint() fires on the first render plus consensus, three FantasyCalc
+// attachments, trending and the freshness check - six-plus times in the first
+// seconds - and again on every kickoff flip through a Sunday. Replacing the
+// content wholesale re-emitted every <details> closed, so anything the reader
+// opened shut under him, repeatedly, without being touched.
+//
+// Folds declare `data-fold="<name>"`; their open state is carried across.
+export function setContent(html) {
+  const open = new Set();
+  for (const d of el.content.querySelectorAll("details[data-fold]")) {
+    if (d.open) open.add(d.dataset.fold);
+  }
+  el.content.innerHTML = html;
+  if (!open.size) return;
+  for (const d of el.content.querySelectorAll("details[data-fold]")) {
+    if (open.has(d.dataset.fold)) d.open = true;
+  }
+}
 
 let statusSig = null;
 export function setStatus(model) {

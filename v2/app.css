@@ -311,8 +311,19 @@ tr.dead .nm,tr.dead .pt{color:var(--c-dim)}
 /* The folded advisory class. */
 details.clsx > summary{list-style:none;cursor:pointer;display:flex;align-items:baseline;
   gap:var(--sp2);flex-wrap:wrap}
+/* An affordance, because list-style:none removes the only one the UA gives. */
+details.clsx > summary::after{content:"\25BE";margin-left:var(--sp1);color:var(--c-dim);
+  font-size:var(--s2);transition:transform .15s var(--ease);display:inline-block}
+details.clsx[open] > summary::after{transform:rotate(180deg)}
 details.clsx > summary::-webkit-details-marker{display:none}
 details.clsx > summary:hover{color:var(--c-act)}
 details.clsx > summary .more{font-size:var(--s2);color:var(--c-dim);font-weight:400;
   letter-spacing:0;text-transform:none}
 details.clsx[open] > summary .more{color:var(--c-mute)}
+
+/* Focus, designed rather than inherited. Every interactive thing on this site
+   is reachable by keyboard and none of it was visibly focusable against
+   #0B1017 - the UA ring was doing all the work. */
+a:focus-visible,button:focus-visible,summary:focus-visible,details:focus-visible{
+  outline:2px solid var(--c-act);outline-offset:2px;border-radius:var(--r-sm)}
+.tline:focus-visible{outline-offset:-2px;background:var(--c-raised)}
