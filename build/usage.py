@@ -143,6 +143,7 @@ def build(season, out_path):
         snap_pct[(sid, int(float(r["week"])))] = num(r.get("offense_pct"))
 
     players, weeks_seen, unmatched = {}, set(), 0
+    club_weeks = set()
     for r in stats:
         if str(r.get("season_type") or "REG").upper() != "REG":
             continue
@@ -154,6 +155,7 @@ def build(season, out_path):
             continue
         wk = int(float(r["week"]))
         weeks_seen.add(wk)
+        club_weeks.add(((r.get("team") or "").strip(), wk))
         p = players.setdefault(sid, {"pos": r["position"], "tm": r.get("team") or "", "w": []})
         p["tm"] = r.get("team") or p["tm"]          # latest team wins
         p["w"].append([
@@ -191,10 +193,27 @@ def build(season, out_path):
     for p in players.values():
         p["w"].sort(key=lambda x: x[0])
 
+    # WHICH CLUBS EACH WEEK ACTUALLY HOLDS.
+    #
+    # `through_week` flips to N the moment ANY row for week N lands, and
+    # nflverse ingests game by game. On 2026-10-13, fourteen hours after the
+    # Monday night game, week 5 held thirty clubs - everyone but CAR and KC.
+    # Built without this, the mirror would have said "usage through week 5"
+    # while every Chiefs and Panthers player silently had no week-5 row, which
+    # reads downstream as "he did not play" rather than "we do not know yet".
+    # The vacancy layer has carried exactly this field since it shipped; the
+    # usage mirror should never have been the half without it.
+    coverage = {}
+    for wk in sorted(weeks_seen):
+        clubs = {t for (t, w) in club_weeks if w == wk and t}
+        coverage[str(wk)] = {"teams_reported": len(clubs),
+                             "teams": sorted(clubs)}
+
     payload = {
         "season": int(season),
         "through_week": max(weeks_seen) if weeks_seen else 0,
         "weeks": sorted(weeks_seen),
+        "coverage": coverage,
         "generated_at": datetime.datetime.now(datetime.timezone.utc)
                          .replace(microsecond=0).isoformat().replace("+00:00", "Z"),
         "source_updated_at": asset_updated_at("stats_player", f"stats_player_week_{season}.csv"),
@@ -214,8 +233,11 @@ def build(season, out_path):
         json.dump(payload, f, separators=(",", ":"))
 
     kb = os.path.getsize(out_path) / 1024
+    cov = ", ".join(f"wk{w} {c['teams_reported']}/32"
+                    for w, c in sorted(payload["coverage"].items(), key=lambda x: int(x[0])))
     print(f"  {len(players)} players, weeks {payload['weeks']}, "
           f"{unmatched} stat rows with no Sleeper id, {kb:.0f} KB -> {out_path}")
+    print(f"  coverage: {cov}")
     return payload
 
 

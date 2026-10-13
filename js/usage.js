@@ -40,7 +40,8 @@ export async function load(season, { fetchImpl = fetch } = {}) {
     // No usage layer is a missing enrichment, not a broken page. Every metric
     // that depends on it simply drops out of the compare tool.
     console.warn("usage layer unavailable:", err.message);
-    return { ok: false, byId: new Map(), error: err.message, throughWeek: null };
+    return { ok: false, byId: new Map(), error: err.message, throughWeek: null,
+             coverage: null };
   }
 }
 
@@ -89,7 +90,32 @@ export function index(raw) {
     sources: raw.sources || null,
     generatedAt: raw.generated_at || null,
     sourceUpdatedAt: raw.source_updated_at || null,
+    coverage: raw.coverage || null,
   };
+}
+
+// THE CLUBS WHOSE NEWEST WEEK HAS NOT BEEN FILED.
+//
+// `scheduled` is the set of clubs with a GAME in that week, from
+// schedule.js's teamsInWeek(). That is the only correct denominator. The first
+// version compared against the previous week's club list and was wrong in both
+// directions: a club on bye this week looked unfiled, and a club that was on
+// bye LAST week could never be noticed as unfiled this week - which is the
+// exact failure this exists to catch, silently. Caught in audit, before any
+// bye week arrived to prove it in the wild.
+//
+// Returns null when either side cannot answer - an older mirror with no
+// coverage block, or a schedule that is stale or unreachable. Null means "we
+// do not know", and the footer says nothing rather than claiming completeness
+// it has not measured.
+export function unfiledClubs(usage, scheduled) {
+  const wk = usage?.throughWeek;
+  const cov = usage?.coverage;
+  if (!cov || !Number.isFinite(wk) || !(scheduled instanceof Set) || !scheduled.size) return null;
+  const filed = cov[String(wk)]?.teams;
+  if (!Array.isArray(filed)) return null;
+  const have = new Set(filed);
+  return [...scheduled].filter((t) => !have.has(t)).sort();
 }
 
 // Season averages plus a recent-form window.

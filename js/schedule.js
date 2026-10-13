@@ -263,6 +263,30 @@ export const hasKickedOff = (kickoffUTC, now = Date.now()) =>
 // mismatch. Every team plays in some week, so a code absent from the whole
 // index is a join failure, never a bye - and the page says so out loud
 // instead of quietly declining to lock those players.
+// THE CLUBS WITH A GAME IN WEEK N. The only correct denominator for "has this
+// week been filed yet", because the obvious one - last week's club list - is
+// wrong in both directions: a club on BYE this week looks unfiled, and a club
+// that was on bye LAST week cannot be noticed as unfiled this week.
+//
+// Returns null rather than an empty set when the schedule is unusable, so a
+// caller can tell "nobody played" from "we do not know who played".
+export function teamsInWeek(sched, week) {
+  // STALE IS FINE HERE, unlike for lines. A week's FIXTURE LIST does not change
+  // once published - this file already argues that for kickoff times, and who
+  // is playing whom is more stable still. Bailing on `stale` left `unfiled`
+  // null, which silently restored the false "did not play" flag with nothing on
+  // the page saying the check had been skipped. `!ok` still bails: that is no
+  // schedule at all, not an old one.
+  if (!sched?.ok) return null;
+  const games = sched.byWeek?.get(Number(week));
+  if (!games || !games.length) return null;
+  const out = new Set();
+  for (const g of games) {
+    for (const t of [g.home, g.away]) if (t) out.add(normTeam(t));
+  }
+  return out;
+}
+
 export function unknownTeams(sched, teams) {
   if (!sched?.ok) return [];
   const bad = new Set();

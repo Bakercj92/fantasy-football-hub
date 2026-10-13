@@ -11,11 +11,19 @@ const t = (name, fn) => { try { fn(); pass++; } catch (e) { fail++; console.erro
 
 const text = (html) => html.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
 const BEST = { id:"jax", name:"Jacksonville", team:"JAX", pts:10.2, opponent:"@TEN" };
-const D = (over = {}) => ({
-  slot:"DEF", best:BEST,
-  current:{ id:"phi", name:"Philadelphia", team:"PHI", pts:5.3, locked:false },
-  empty:false, unresolved:false, unprojected:false, gap:4.9, actionable:true, ...over,
-});
+// `counts` is derived unless a case states it, so a test that flips
+// `actionable` or `marginal` cannot silently leave the styling field behind -
+// which is exactly how the header and the row drifted apart in the first place.
+const D = (over = {}) => {
+  const d = {
+    slot:"DEF", best:BEST,
+    current:{ id:"phi", name:"Philadelphia", team:"PHI", pts:5.3, locked:false },
+    empty:false, unresolved:false, unprojected:false, gap:4.9,
+    actionable:true, marginal:false, ...over,
+  };
+  if (!("counts" in over)) d.counts = d.actionable && !d.marginal;
+  return d;
+};
 
 // Every branch goes through this, so no branch can ship the defects above.
 const clean = (html, label) => {
@@ -138,10 +146,16 @@ t("the copy never calls his own rostered defence a free agent", () => {
 
 t("AUDIT: the wire tally counts actionable work, and only that", () => {
   // Deleting the defence term from the inline template left every suite green.
+  //
+  // UPDATED 2026-10-13 with the tally floor: `actionable` alone no longer
+  // counts, because a gap inside the feed's precision is not work. The case
+  // that used to read `{actionable:true}` with no gap now asserts the opposite,
+  // deliberately - see the floor test below.
   const w = (def) => ({ upgrades:[1,2], risers:[3], def });
   assert.strictEqual(wireTally(w(null)), 3);
-  assert.strictEqual(wireTally(w({ actionable:true })), 4);
-  assert.strictEqual(wireTally(w({ actionable:false })), 3);
+  assert.strictEqual(wireTally(w({ actionable:true, gap:4.9, counts:true })), 4);
+  assert.strictEqual(wireTally(w({ actionable:true, gap:0.3, marginal:true, counts:false })), 3);
+  assert.strictEqual(wireTally(w({ actionable:false, gap:4.9, counts:false })), 3);
   assert.strictEqual(wireTally(null), 0);
   assert.strictEqual(wireTally({}), 0);
 });
@@ -151,6 +165,31 @@ t("RE-AUDIT: an empty seat is not 'held'", () => {
     empty:true, current:null })), "allLocked empty");
   assert.ok(/is empty/i.test(s), s);
   assert.ok(!/holding your/i.test(s), s);
+});
+
+t("the tally floor counts work without hiding the row", () => {
+  // Chris rejected a gate on SHOWING the row. This gates only the count: a
+  // +0.1 defence gap is inside the feed's precision and should not read as an
+  // item of work in the header.
+  // `counts` is the single field the header, the styling and the verb all read.
+  const w = (gap, counts) => ({ upgrades:[1,2], risers:[3],
+                                def:{ actionable:true, gap, counts, marginal: !counts } });
+  assert.strictEqual(wireTally(w(4.9, true)), 4);
+  assert.strictEqual(wireTally(w(0.5, true)), 4, "the floor itself counts");
+  assert.strictEqual(wireTally(w(0.4, false)), 3);
+  assert.strictEqual(wireTally(w(0.1, false)), 3);
+});
+
+t("MARGINAL: the header, the styling and the verb all agree", () => {
+  // The first version moved only the count, so a bright "Stream Jacksonville
+  // +0.3" sat under a header reading "0 worth a look".
+  const html = defRow(D({ gap:0.3, actionable:true, marginal:true }));
+  const s = clean(html, "marginal");
+  assert.ok(html.includes("calm"), "a sub-floor edge is not styled as a claim");
+  assert.ok(/Marginal:/.test(s), s);
+  assert.ok(!/^Stream/.test(s), s);
+  assert.ok(/inside the precision/i.test(s), s);
+  assert.ok(s.includes("+0.3"), s);
 });
 
 console.log(`defrow  ${pass} passed, ${fail} failed`);

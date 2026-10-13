@@ -252,6 +252,14 @@ const delta = (recent, season) => {
 //
 // Missing is never zero here either: a starter the projections did not price
 // yields a null gap and says so, instead of making the free man look +10.
+// A defence gap smaller than this is inside the feed's own precision. It does
+// NOT hide the row - the standing check renders every week, which is the point
+// of the feature - but it keeps the header, the styling and the verb agreeing
+// with each other. Showing and recommending are separate questions, and the
+// first version moved only the header, so a bright "Stream Jacksonville +0.3"
+// sat under a header reading "0 worth a look".
+const DEF_FLOOR = 0.5;
+
 export function defStream(L) {
   if (!L?.priced || !L?.rostered || !Array.isArray(L.slots)) return null;
 
@@ -340,6 +348,13 @@ export function defStream(L) {
     // Only an actionable upgrade counts toward the header tally: "yours is
     // fine" is information, not an item of work.
     actionable: gap !== null && gap > 0 && !current?.locked && anyPriced,
+    // A real but sub-precision edge. Rendered, styled and counted as
+    // information rather than as work.
+    marginal: gap !== null && gap > 0 && gap < DEF_FLOOR && !current?.locked && anyPriced,
+    // One field for "this is work", so the header, the styling and the verb
+    // cannot drift apart again - which is how the header came to read 0 over a
+    // row saying "Stream".
+    counts: gap !== null && gap >= DEF_FLOOR && !current?.locked && anyPriced,
   };
 }
 

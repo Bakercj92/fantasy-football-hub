@@ -362,5 +362,95 @@ t("a resolution reports the chart and still never gives advice", () => {
   }
 });
 
+t("UNINGESTED IS NOT ABSENT: a club nflverse has not filed raises no absent flag", () => {
+  // Live 2026-10-13. Fourteen hours after the Monday night game, week 5 held
+  // 30 clubs. Without the `unfiled` set, every Chiefs player with history drew
+  // "projected 14.0 but did not play in week 5" — about a quarterback who had
+  // thrown for three hundred yards the night before.
+  const mahomes = player("QB", "KC", [
+    { wk: 3, opp: "DEN", act: { pass_yd: 280, pass_td: 2 } },
+    { wk: 4, opp: "LV",  act: { pass_yd: 310, pass_td: 3 } },
+  ]);
+  const f = S.check({ proj: 21.0, usageEntry: mahomes, throughWeek: 5, sigma: SIGMA_QB,
+                      pos: "QB", unfiled: ["CAR", "KC"] });
+  assert.ok(!f.some((x) => x.kind === "absent"),
+    `an uningested club must not be reported as absent: ${JSON.stringify(f)}`);
+});
+
+t("...and the useful flag is NOT suppressed for those same players", () => {
+  // The absent gate also gated the projection-vs-form flag, so the false
+  // signal shouted while the real one went quiet. Form must still run on the
+  // history he does have.
+  const cold = player("QB", "KC", [
+    { wk: 3, opp: "DEN", act: { pass_yd: 100 } },
+    { wk: 4, opp: "LV",  act: { pass_yd: 110 } },
+  ]);
+  cold.formPts = 5.0;
+  const f = S.check({ proj: 21.0, usageEntry: cold, throughWeek: 5, sigma: 3,
+                      pos: "QB", unfiled: ["KC"] });
+  assert.ok(f.some((x) => x.kind === "projection-high"),
+    `form disagreement must still be reported: ${JSON.stringify(f)}`);
+});
+
+t("a club that HAS filed still raises the absent flag — the Murray case survives", () => {
+  // The guard must be narrow. A player whose club filed and who is simply not
+  // in that week is the signal this module exists for.
+  const murray = player("QB", "MIN", [{ wk: 1, opp: "GB", act: { pass_yd: 18 } }]);
+  const f = S.check({ proj: 17.2, usageEntry: murray, throughWeek: 2, sigma: SIGMA_QB,
+                      pos: "QB", unfiled: ["CAR", "KC"] });
+  assert.ok(f.some((x) => x.kind === "absent"), "MIN filed; this is a real absence");
+});
+
+t("no unfiled set at all behaves exactly as before", () => {
+  const murray = player("QB", "MIN", [{ wk: 1, opp: "GB", act: { pass_yd: 18 } }]);
+  for (const unfiled of [null, undefined, [], new Set()]) {
+    const f = S.check({ proj: 17.2, usageEntry: murray, throughWeek: 2, sigma: SIGMA_QB,
+                        pos: "QB", unfiled });
+    assert.ok(f.some((x) => x.kind === "absent"), `regressed with unfiled=${JSON.stringify(unfiled)}`);
+  }
+});
+
+t("a Set works as well as an array", () => {
+  const mahomes = player("QB", "KC", [{ wk: 4, opp: "LV", act: { pass_yd: 310 } }]);
+  const f = S.check({ proj: 21.0, usageEntry: mahomes, throughWeek: 5, sigma: SIGMA_QB,
+                      pos: "QB", unfiled: new Set(["KC"]) });
+  assert.ok(!f.some((x) => x.kind === "absent"));
+});
+
+t("AUDIT P1a: a TRADED player is keyed on his live club, not the mirror's stale one", () => {
+  // usage.py sets the mirror's team by "latest team wins" off the most recent
+  // stats row, so a player who moved to KC is still filed under BUF until KC's
+  // week is ingested - which is the very week this guard is about.
+  const moved = player("WR", "BUF", [
+    { wk: 3, opp: "NYJ", act: { rec_yd: 70 } },
+    { wk: 4, opp: "NE",  act: { rec_yd: 64 } },
+  ]);
+  const stale = S.check({ proj: 15.0, usageEntry: moved, throughWeek: 5, sigma: 5,
+                          pos: "WR", unfiled: ["KC", "CAR"] });
+  assert.ok(stale.some((x) => x.kind === "absent"),
+    "keyed on the mirror alone, the false flag survives — that is the bug");
+  const live = S.check({ proj: 15.0, usageEntry: moved, throughWeek: 5, sigma: 5,
+                         pos: "WR", unfiled: ["KC", "CAR"], team: "KC" });
+  assert.ok(!live.some((x) => x.kind === "absent"),
+    `his live club is unfiled, so there is nothing to report: ${JSON.stringify(live)}`);
+});
+
+t("AUDIT P1b: coverage that could not be measured says so on the flag", () => {
+  // unfiled === null means the schedule was unreachable, so an uningested club
+  // cannot be ruled out. The flag still fires - the Murray case is the most
+  // valuable thing on the page - but it stops asserting more than it knows.
+  const murray = player("QB", "MIN", [{ wk: 1, opp: "GB", act: { pass_yd: 18 } }]);
+  const [flag] = S.check({ proj: 17.2, usageEntry: murray, throughWeek: 2,
+                           sigma: SIGMA_QB, pos: "QB", unfiled: null });
+  assert.strictEqual(flag.coverageUnknown, true);
+  assert.match(flag.ask, /depth chart/, "the module's own instruction must survive");
+  assert.match(flag.ask, /could not be checked/);
+  // ...and when coverage WAS measured, no caveat is attached.
+  const [ok] = S.check({ proj: 17.2, usageEntry: murray, throughWeek: 2,
+                         sigma: SIGMA_QB, pos: "QB", unfiled: ["KC"] });
+  assert.strictEqual(ok.coverageUnknown, undefined);
+  assert.ok(!/could not be checked/.test(ok.ask));
+});
+
 console.log(`signals  ${pass} passed, ${fail} failed`);
 process.exit(mFail + fail ? 1 : 0);

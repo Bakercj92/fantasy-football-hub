@@ -209,7 +209,7 @@ function seasonWeeks(id) {
 // base proves it does not.
 const COLS = ["wk","off_pct","tgt","rec","rec_yd","tgt_share","ay_share","wopr","car","rush_yd","att","pass_yd"];
 
-function usagePayload({ throughWeek = 3, generatedAt = "2026-09-15T09:00:00Z" } = {}) {
+function usagePayload({ throughWeek = 3, generatedAt = "2026-09-15T09:00:00Z", shortClubs = [] } = {}) {
   const p = {};
   const put = (id, pos, tm, weeks, actuals) => { p[id] = { pos, tm, w: weeks, a: actuals || {} }; };
   const wk = (n, off, tgt, car, share) => [n, off, tgt, Math.round(tgt * 0.65), tgt * 11, share, null, null, car, car * 4, 0, 0];
@@ -255,7 +255,24 @@ function usagePayload({ throughWeek = 3, generatedAt = "2026-09-15T09:00:00Z" } 
       [wk(1,0.03,0,1,0.01), wk(2,0.05,0,2,0.01), wk(3,0.11,1,3,0.02),
        wk(4,0.04,0,1,0.01), wk(5,0.06,0,2,0.01), wk(6,0.12,1,3,0.02)], {});
 
-  return { season: 2026, through_week: throughWeek, weeks: [1,2,3],
+  // Coverage, so the "newest week is short a club" footer is reachable. Default
+  // is complete; `shortClubs` opts a scenario into the real 2026-10-13 shape.
+  //
+  // THE FULL 32, NOT THE FIXTURE'S 16. Coverage says which CLUBS FILED, and it
+  // is compared against the real nflverse schedule the harness serves - so a
+  // list drawn from this file's invented 16-team universe reported the other
+  // sixteen as unfiled in every scenario. Caught by rendering: the footer named
+  // seventeen clubs on a page that was supposed to be clean.
+  const allClubs = ["ARI","ATL","BAL","BUF","CAR","CHI","CIN","CLE","DAL","DEN","DET","GB",
+                    "HOU","IND","JAX","KC","LA","LAC","LV","MIA","MIN","NE","NO","NYG",
+                    "NYJ","PHI","PIT","SEA","SF","TB","TEN","WAS"];
+  const coverage = {};
+  for (const wk of [1, 2, 3]) {
+    const clubs = (wk === 3 && shortClubs.length)
+      ? allClubs.filter((t) => !shortClubs.includes(t)) : allClubs;
+    coverage[String(wk)] = { teams_reported: clubs.length, teams: clubs };
+  }
+  return { season: 2026, through_week: throughWeek, weeks: [1,2,3], coverage,
            generated_at: generatedAt, source_updated_at: null,
            cols: COLS, act_keys: ["rec","rec_yd","rush_yd","pass_yd","pass_td","pass_int","rush_td","rec_td"],
            p };

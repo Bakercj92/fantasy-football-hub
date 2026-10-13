@@ -75,15 +75,42 @@ export const KINDS = ["absent", "thin", "projection-high", "projection-low"];
  * @param vacancy      indexed vacancy payload (js/vacancy.js), or null. With
  *                     it, the `absent` flag answers its own question.
  */
-export function check({ proj, usageEntry, throughWeek, sigma, injury, id, vacancy, pos } = {}) {
+export function check({ proj, usageEntry, throughWeek, sigma, injury, id, vacancy, pos,
+                        unfiled = null, team = null } = {}) {
   const flags = [];
   pos = pos || usageEntry?.pos || null;
   if (typeof proj !== "number" || proj < MIN_INTERESTING) return flags;
   if (!Number.isFinite(throughWeek) || throughWeek < 1) return flags;
 
   const weeks = usageEntry?.weeks ?? [];
-  const playedLast = weeks.some((w) => w.wk === throughWeek);
   const played = weeks.length;
+
+  // "HIS CLUB HAS NOT BEEN INGESTED" IS NOT "HE DID NOT PLAY".
+  //
+  // `through_week` flips to N the moment ANY row for week N lands, and nflverse
+  // ingests game by game. Measured 2026-10-13, fourteen hours after the Monday
+  // night game: week 5 held 30 clubs, and every Chiefs and Panthers player with
+  // history would have drawn the high-severity absent flag below - "projected
+  // 14.0 but did not play in week 5" about a quarterback who threw for three
+  // hundred yards the night before. Worse, it ALSO suppressed the form flag for
+  // exactly those players, so the false signal shouted while the useful one
+  // went quiet.
+  //
+  // This is the same distinction the block one layer up already makes between
+  // "not in the dataset" and "did not play". `unfiled` is the set of clubs
+  // whose newest week has not landed, from usage.unfiledClubs().
+  // THE LIVE CLUB, NOT THE MIRROR'S. usage.py sets the mirror's team by "latest
+  // team wins" off the most recent STATS row, so a player traded mid-season is
+  // still filed under his old club until the new club's week is ingested -
+  // which is exactly the week this guard is about. Keyed on the mirror, a
+  // player who moved to an uningested club drew the false absent flag anyway.
+  // `team` comes from the call site already normalised to nflverse codes; this
+  // repo learned the same lesson once before, on the season pages' baked team
+  // column. Caught in audit.
+  const club = team || usageEntry?.team || null;
+  const clubUnfiled = !!club && !!unfiled
+    && (unfiled instanceof Set ? unfiled.has(club) : unfiled.includes(club));
+  const playedLast = weeks.some((w) => w.wk === throughWeek) || clubUnfiled;
 
   // MISSING IS NOT ABSENT, AND THIS BLOCK GOT IT WRONG.
   //
@@ -121,6 +148,16 @@ export function check({ proj, usageEntry, throughWeek, sigma, injury, id, vacanc
       ask: "returning starter or backup? the box score cannot tell you - check the depth chart",
       resolvable: false,
     };
+    // COVERAGE COULD NOT BE MEASURED. `unfiled` is null when the schedule was
+    // stale or unreachable, so this flag cannot rule out the far more boring
+    // explanation - that nflverse simply has not ingested his club's game yet.
+    // The flag still fires, because the Murray case is the highest-value thing
+    // on this page, but it stops asserting more than it knows.
+    if (unfiled === null) {
+      flag.coverageUnknown = true;
+      flag.ask += " - and note nflverse coverage for this week could not be checked on " +
+                  "this load, so an uningested club cannot be ruled out either";
+    }
     const answer = resolveAbsent({ id, vacancy });
     if (answer) {
       flag.resolvable = true;

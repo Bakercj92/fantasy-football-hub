@@ -485,5 +485,20 @@ t("RE-AUDIT: a negative-scoring defence cannot sneak past the published check", 
   assert.strictEqual(d.actionable, false, "an unpublished feed is never an action");
 });
 
+t("MARGINAL: a sub-0.5 gap is real, reported, and not work", () => {
+  const mk = (bp) => defStream(DL({
+    priced: priced(P({ id:"freeDef", name:"Jacksonville", pos:"DEF", team:"JAX", pts:bp }),
+                   P({ id:"mine", name:"Philadelphia", pos:"DEF", team:"PHI", pts:5.3 })) }));
+  let d = mk(5.6);
+  assert.strictEqual(d.gap, 0.3);
+  assert.strictEqual(d.actionable, true, "the edge is real");
+  assert.strictEqual(d.marginal, true, "...and it is not a claim");
+  d = mk(5.8);
+  assert.strictEqual(d.gap, 0.5);
+  assert.strictEqual(d.marginal, false, "the floor itself is work");
+  d = mk(10.2);
+  assert.strictEqual(d.marginal, false);
+});
+
 console.log(`waivers  ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

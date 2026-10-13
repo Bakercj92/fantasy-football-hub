@@ -476,6 +476,27 @@ async function run({ label, width, height, fcalcOk = true, scheduleOk = true, se
       sim: WED, week: 5, league: "chop" },
   );
 
+  // The live 2026-10-13 shape: nflverse had not filed the Monday night game
+  // fourteen hours later, so the newest week held 30 clubs. The footer has to
+  // name them - a club with no row reads as a player who sat out otherwise.
+  scenarios.push(
+    { label:"USAGE newest week short two clubs", width:1440, height:900,
+      sim: TUE, week: 5, displayWeek: 4, seedLog,
+      usage: F.usagePayload({ shortClubs: ["KC", "CIN"] }) },
+    { label:"USAGE newest week short, phone", width:390, height:844,
+      sim: TUE, week: 5, displayWeek: 4,
+      usage: F.usagePayload({ shortClubs: ["KC", "CIN"] }) },
+    // THURSDAY NIGHT. through_week flips the moment the TNF box score lands,
+    // with thirty clubs still to play. Naming them all is not a sentence, so
+    // the footer counts instead - a branch nothing else reaches.
+    { label:"USAGE week has barely begun (most clubs unfiled)", width:1440, height:900,
+      sim: THU, week: 5,
+      usage: F.usagePayload({ shortClubs:
+        ["ARI","ATL","BAL","BUF","CAR","CHI","CIN","CLE","DAL","DEN","DET","GB",
+         "HOU","IND","JAX","KC","LA","LAC","LV","MIA","MIN","NE","NO","NYG",
+         "NYJ","PIT","SEA","SF","TB","TEN"] }) },
+  );
+
   for (const s of scenarios) out.push(await run(s));
   console.log(JSON.stringify(out, null, 1));
 })();

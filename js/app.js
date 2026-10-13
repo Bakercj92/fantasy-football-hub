@@ -26,6 +26,8 @@ const state = {
   // one o'clock would otherwise wipe a comparison mid-read.
   selection: {}, ros: new Map(), rosPending: new Set(), fcalc: new Map(),
   usage: null, usageFresh: null, trending: new Map(),
+  // Clubs whose newest mirrored week nflverse has not filed yet.
+  unfiled: null,
   // The vacancy layer rides with usage for the same reason: a local file in
   // this repo, no network round trip to hide behind a progressive render.
   vacancy: null,
@@ -79,6 +81,13 @@ async function boot() {
     state.schedule = schedule;
     state.usage = used;
     state.vacancy = vac;
+
+    // WHICH CLUBS THE MIRROR'S NEWEST WEEK IS STILL MISSING. Computed once,
+    // here, because loadLeague() attaches signal flags and those flags must
+    // not call an uningested club a player who did not play. Measured against
+    // the SCHEDULE - a club on bye has not failed to file.
+    state.unfiled = usage.unfiledClubs(
+      state.usage, sched.teamsInWeek(state.schedule, state.usage?.throughWeek));
 
     setLoading("Reading your leagues");
     await Promise.all(state.cfg.leagues.map(loadLeague));
@@ -198,6 +207,14 @@ async function loadLeague(entry) {
         proj: p.pts, usageEntry: entry, throughWeek: state.usage?.throughWeek,
         sigma: sigma[p.pos], injury: p.injury, pos: p.pos,
         id: String(id), vacancy: state.vacancy,
+        // Clubs whose newest mirrored week has not landed. Without this, a
+        // player whose club nflverse has not ingested yet is reported as
+        // having not played. See the comment in signals.js.
+        unfiled: state.unfiled,
+        // Sleeper's live team, normalised into nflverse's code space (LAR->LA,
+        // WSH->WAS, JAC->JAX, OAK->LV). The mirror's own team column goes stale
+        // on a traded player for exactly the week this guard is about.
+        team: p.team ? sched.normTeam(p.team) : null,
       }),
       matchup: matchup.read(mtable, p.pos, p.opponent),
     };

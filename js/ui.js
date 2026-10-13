@@ -327,6 +327,13 @@ export function defRow(d) {
     why = `${best} projects ${d.gap === null ? "differently" : `<b>${sgn(d.gap)}</b>`}, but
       ${esc(d.current.name)} has already kicked off, so Sleeper will refuse the swap this
       week. Worth remembering for next week.`;
+  } else if (d.marginal) {
+    line = `<div class="line"><b>Marginal: ${esc(d.best.name)} over ${esc(d.current.name)}</b>
+      <span class="over">in your ${esc(d.slot)}</span>
+      <span class="delta">${sgn(d.gap)}</span></div>`;
+    why = `${best} against <b>${esc(d.current.name)}</b> (${n1(d.current.pts)}) — ${sgn(d.gap)},
+      which is inside the precision of the projection feed itself. Shown because this row is
+      shown every week, not because it is worth a claim.`;
   } else if (d.actionable) {
     line = `<div class="line"><b>Stream ${esc(d.best.name)}</b>
       <span class="over">over <b>${esc(d.current.name)}</b> in your ${esc(d.slot)}</span>
@@ -357,7 +364,7 @@ export function defRow(d) {
       because it was checked, not because nothing looked.`;
   }
 
-  return `<div class="call${d.actionable ? "" : " calm"}">${line}
+  return `<div class="call${d.counts ? "" : " calm"}">${line}
     <div class="why">${why}</div></div>`;
 }
 
@@ -366,9 +373,12 @@ export function defRow(d) {
 // every test passing, and the render harness only PRINTS this number.
 export function wireTally(w) {
   if (!w) return 0;
-  return (w.upgrades?.length || 0) + (w.risers?.length || 0)
-    // A standing row that says "nothing to do" is information, not work.
-    + (w.def?.actionable ? 1 : 0);
+  const def = w.def;
+  // A standing row that says "nothing to do" is information, not work - and so
+  // is a gap inside the feed's precision. `marginal` comes from defStream(), so
+  // the count, the styling and the verb all read one field.
+  const defCounts = !!def?.counts;
+  return (w.upgrades?.length || 0) + (w.risers?.length || 0) + (defCounts ? 1 : 0);
 }
 
 function waiverBlock(L, state) {
@@ -844,6 +854,11 @@ function marketBlock(L, state) {
 // build step is tolerable here at all: a derived copy that cannot lie about
 // its own age is a mirror, and one that can is the bug class that bit the old
 // project three times.
+// Name them while a reader can hold them in their head; past that, count them.
+const NAME_CLUBS_UPTO = 4;
+const listAnd = (xs) => (xs.length <= 1 ? (xs[0] || "")
+  : `${xs.slice(0, -1).join(", ")} and ${xs[xs.length - 1]}`);
+
 function usageFooter(state) {
   const u = state.usage;
   if (!u?.ok) {
@@ -852,6 +867,8 @@ function usageFooter(state) {
   }
   const src = u.sources || null;
   const snapsMissing = src && src.snap_counts && src.snap_counts.ok === false;
+  const short = state.unfiled;
+  const filedCount = u.coverage?.[String(u.throughWeek)]?.teams?.length ?? 0;
   const f = state.usageFresh;
   const stale = f?.behind
     ? ` <span class="warn">nflverse has published newer data since — about ${f.hours}
@@ -866,6 +883,23 @@ function usageFooter(state) {
     ${snapsMissing
       ? `<span class="warn">Snap counts did not publish for this build, so snap share is blank
          everywhere — that is missing data, not zero snaps.</span>`
+      : ""}
+    ${short && short.length
+      ? (short.length <= NAME_CLUBS_UPTO
+        ? `<span class="warn">nflverse has not filed week ${u.throughWeek} for
+           ${esc(listAnd(short))} yet, so those players show no week ${u.throughWeek}
+           usage. That is a gap in the feed, not a player who sat out — their recent-form
+           numbers are a week behind everyone else's.</span>`
+        // MOST OF THE WEEK MISSING IS A DIFFERENT STATEMENT, AND A LIST OF THIRTY CLUB
+        // CODES IS NOT A SENTENCE. The honest reading of a Thursday night - through_week
+        // flips to N the moment the TNF box score lands, with thirty clubs still to play -
+        // is that the week has barely begun, not that thirty clubs are late.
+        : `<span class="warn">Week ${u.throughWeek} has only started to land —
+           ${short.length} of the ${short.length + filedCount} clubs playing that week have
+           not been filed yet. ${u.throughWeek > 1
+             ? `Recent-form numbers below are effectively through week ${u.throughWeek - 1}
+                for most players.`
+             : "Most players have no measured usage yet."}</span>`)
       : ""}
     Snaps, touches and target share are MEASURED, never projected — and a player with no snap row
     keeps a blank, not a zero.</div>`;

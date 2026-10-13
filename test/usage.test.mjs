@@ -1,4 +1,4 @@
-import { index, aggregate, checkFreshness, RECENT } from "../js/usage.js";
+import { index, aggregate, checkFreshness, unfiledClubs, RECENT } from "../js/usage.js";
 import assert from "node:assert";
 
 let pass = 0, fail = 0;
@@ -113,6 +113,49 @@ await ta("freshness says nothing rather than guessing when the API is unreachabl
   assert.strictEqual(await checkFreshness(usage, { fetchImpl: async () => { throw new Error("nope"); } }), null);
   assert.strictEqual(await checkFreshness(usage, { fetchImpl: async () => ({ ok: false }) }), null);
   assert.strictEqual(await checkFreshness({ ok: false }, { fetchImpl: async () => ({}) }), null);
+});
+
+t("the clubs whose newest week has not been filed are named", () => {
+  // Live 2026-10-13: fourteen hours after Monday night, week 5 held 30 clubs -
+  // everyone but CAR and KC. Without this the mirror says "usage through week
+  // 5" while every Chiefs and Panthers player silently has no week-5 row.
+  const u = { throughWeek: 5, coverage: { "5": { teams: ["PHI", "BUF"] } } };
+  assert.deepStrictEqual(
+    unfiledClubs(u, new Set(["PHI", "BUF", "CAR", "KC"])), ["CAR", "KC"]);
+});
+
+t("A BYE IS NOT A GAP — the denominator is who had a GAME, not who filed last week", () => {
+  // The first version compared against the previous week's club list, which
+  // reported every club on bye as unfiled. CLE is on bye in week 6, so it is
+  // not in the scheduled set and must not be named.
+  const u = { throughWeek: 6, coverage: { "6": { teams: ["PHI", "BUF"] } } };
+  assert.deepStrictEqual(unfiledClubs(u, new Set(["PHI", "BUF"])), []);
+});
+
+t("A CLUB ON BYE LAST WEEK IS STILL CAUGHT THIS WEEK", () => {
+  // The other direction, and the one that failed SILENTLY: compared against
+  // last week's clubs, a club that was on bye then is absent from the
+  // denominator, so a genuinely unfiled week for it could never be noticed.
+  const u = { throughWeek: 6, coverage: { "6": { teams: ["PHI"] } } };
+  assert.deepStrictEqual(unfiledClubs(u, new Set(["PHI", "CLE"])), ["CLE"]);
+});
+
+t("a complete week is short of nothing", () => {
+  const u = { throughWeek: 5, coverage: { "5": { teams: ["PHI", "BUF", "KC"] } } };
+  assert.deepStrictEqual(unfiledClubs(u, new Set(["KC", "PHI", "BUF"])), []);
+});
+
+t("null when either side cannot answer, never a confident empty list", () => {
+  // null is "we do not know"; [] is "nothing is missing". The footer must not
+  // announce completeness it has not measured.
+  const cov = { "5": { teams: ["PHI"] } };
+  assert.strictEqual(unfiledClubs({ throughWeek: 5 }, new Set(["PHI"])), null, "no coverage block");
+  assert.strictEqual(unfiledClubs({ throughWeek: 5, coverage: cov }, null), null, "no schedule");
+  assert.strictEqual(unfiledClubs({ throughWeek: 5, coverage: cov }, new Set()), null, "empty schedule");
+  assert.strictEqual(unfiledClubs({ throughWeek: null, coverage: cov }, new Set(["PHI"])), null);
+  assert.strictEqual(unfiledClubs({ throughWeek: 9, coverage: cov }, new Set(["PHI"])), null,
+    "coverage has no entry for the newest week");
+  assert.strictEqual(unfiledClubs(null, new Set(["PHI"])), null);
 });
 
 console.log(`usage  ${pass} passed, ${fail} failed`);
