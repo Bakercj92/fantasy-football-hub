@@ -62,8 +62,23 @@ let hooks = {
 
 /** Where ./data/ and ./leagues.json actually live, relative to the document.
  *  "./" when served from the repo root; "../" from a subfolder; an absolute
- *  origin when the page is an artifact somewhere else entirely. */
+ *  origin when the page is an artifact somewhere else entirely.
+ *
+ *  ALWAYS ENDS IN A SLASH. Without one, URL() treats the last segment as a
+ *  FILE and drops it: a base of
+ *  "https://bakercj92.github.io/fantasy-football-hub" resolved
+ *  ./data/usage_2026.json to bakercj92.github.io/data/... - a 404, and both
+ *  loaders swallow a 404 into a silent degraded mode, which is the precise
+ *  failure this seam exists to prevent. Caught in audit 2026-10-13, against
+ *  the real origin, by the exact input the comment above advertises. */
 let BASE = "./";
+export const withSlash = (b) => {
+  // Default FIRST, then test the defaulted value - the first cut tested
+  // `b || "./"` and then returned `String(b)`, so an empty base came back
+  // empty. Its own test caught it.
+  const v = String(b || "./");
+  return v.endsWith("/") ? v : `${v}/`;
+};
 
 /** The seam. Rewrites a document-relative data path against BASE and leaves
  *  anything absolute alone, so engine modules keep their own literals. */
@@ -73,9 +88,11 @@ function dataFetch(url, opts) {
   return fetch(new URL(u.replace(/^\.\//, ""), new URL(BASE, location.href)).toString(), opts);
 }
 
-/** The decision log is shared across every build on this origin. Flipped back
- *  on at the swap. */
-const LOG_DISABLED = false;
+/** The decision log is shared across every build on this origin, and it is
+ *  what Tuesday's recap grades on. Off until the swap.
+ *  Named for what it IS, not its negation: a flag on the one constraint
+ *  protecting real decision history must not read backwards. */
+const LOG_ENABLED = false;
 
 
 
@@ -316,7 +333,7 @@ async function loadLeague(entry) {
   // is what gets graded on Tuesday. Silent when the two agree - a log full of
   // "no difference" teaches nothing.
   // WRITE DISABLED FOR THE REBUILD - see change 2 in this file's header.
-  LOG_DISABLED && recordLineup({
+  LOG_ENABLED && recordLineup({
     leagueKey: entry.key, season: state.season, week: state.week,
     // optimalLineup() returns [{slot, player}], NOT players. The first version
     // read `.id` off the wrapper, so every entry was undefined, `suggested`
@@ -590,7 +607,7 @@ function watchKickoffs() {
 // ---------------------------------------------------------------------------
 export function start(injected) {
   hooks = injected;
-  BASE = injected.base || "./";
+  BASE = withSlash(injected.base || "./");
   return boot();
 }
 export { state, paint };

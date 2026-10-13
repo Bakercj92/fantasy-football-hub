@@ -42,10 +42,7 @@ function onPaint() {
       leagues: state.cfg.leagues, week: state.week, season: state.season,
       gradedWeek: state.gradedWeek, day,
     });
-    shell.wire({
-      onNav: (page) => go(page, route.league || state.active),
-      onLeague: (key) => { state.active = key; go(route.page, key); },
-    });
+    shell.wire();
     mounted = true;
     onRoute(readHash);
     readHash();

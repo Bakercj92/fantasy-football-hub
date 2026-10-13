@@ -62,7 +62,7 @@ body{margin:0;color:var(--c-text);
   font:var(--s3)/var(--lh) -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Arial,sans-serif;
   -webkit-font-smoothing:antialiased}
 button{font-family:inherit}
-a{color:inherit}
+a{color:inherit;text-decoration:none}
 
 /* ===========================================================================
    SHELL
@@ -199,7 +199,9 @@ tr.dead .nm,tr.dead .pt{color:var(--c-dim)}
    390px on 2026-10-13: the first cut folded Opp (620px) BEFORE Tm (460px), so
    a phone kept a three-letter team code and lost the bye flag, the kickoff
    time and the lock icon - the three things that decide whether a lineup
-   change is even possible. Opp does not fold at all. */
+   change is even possible. Opp now folds LAST, and its payload
+   (bye, lock, kickoff time) moves inline with the name as .nmark rather than
+   disappearing with the column. */
 @media(max-width:860px){ .fold-lg{display:none} }   /* VOR - the compare tool says it better */
 @media(max-width:620px){ .fold-md{display:none} }   /* Tm  - the opponent implies it */
 @media(max-width:460px){ .fold-sm{display:none} }   /* Opp - its payload moves to .nmark */
@@ -233,15 +235,21 @@ tr.dead .nm,tr.dead .pt{color:var(--c-dim)}
   .navbar{display:none}
   .main{padding:var(--sp5) var(--sp5) var(--sp7);margin:0}
   .status{margin-left:0}
-  /* Content spreads rather than stretching one column to 1100px.
-     MEASURED 2026-10-13: minmax(340px) put two tables side by side at 1024px
-     and handed the player-name column 133px - LESS than the 340px it gets on
-     a tablet, and "Starting Quarterback" wrapped. A desktop that is worse
-     than a phone is the Phase-3a failure wearing a different hat.
-     520px is the floor at which a six-column table still reads, so the split
-     happens only when there is genuinely room for two of them. */
-  .cols{display:grid;gap:var(--sp4);grid-template-columns:repeat(auto-fit,minmax(520px,1fr));
+  /* FOR CARDS. NOT FOR TABLES.
+     Measured twice on 2026-10-13, and the second measurement is why this
+     carries a warning rather than a bigger number. At minmax(340px) two
+     tables sat side by side at 1024px and the player-name column got 133px -
+     LESS than the 340px it gets on a tablet. Raising the floor to 520px moved
+     the failure rather than fixing it: the split then happened at 1440px and
+     handed the name column 167px, wrapping the same name again.
+     A six-column table needs the full content width at every width worth
+     having. Side-by-side is for cards of prose and numbers, where halving the
+     measure is a benefit rather than a squeeze. */
+  .cols{display:grid;gap:var(--sp4);grid-template-columns:repeat(auto-fit,minmax(420px,1fr));
     align-items:start}
+  .cols table{table-layout:auto}
+  /* Tables stack, always. */
+  .stack{display:block}
 }
 @media(min-width:1280px){ :root{--rail:248px} }
 

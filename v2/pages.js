@@ -6,8 +6,13 @@
 
 import { esc } from "./shell.js";
 import { lineupPairs, benchOf } from "./logic/roster.js";
-import { chipLabel } from "./logic/signals.js";
-import { leadFlag } from "./logic/signals.js";
+import { chipLabel, leadFlag } from "./logic/signals.js";
+import { CHIP_FALLBACK_LEN } from "./logic/caps.js";
+
+// Severity colour and tooltip, ported with the chip (js/ui.js:469,476-477).
+const SEV_CLS = { high: "out", medium: "dbt", low: "q" };
+const flagTitle = (f) =>
+  f.text + (f.resolution ? ` \u2014 ${f.resolution.text}` : f.ask ? ` \u2014 ${f.ask}` : "");
 
 const n1 = (v) => (typeof v === "number" ? v.toFixed(1) : "—");
 const sgn = (v) => (typeof v === "number" ? `${v >= 0 ? "+" : ""}${v.toFixed(1)}` : "—");
@@ -15,6 +20,21 @@ const sgn = (v) => (typeof v === "number" ? `${v >= 0 ? "+" : ""}${v.toFixed(1)}
 const kick = (ms) => typeof ms === "number"
   ? new Date(ms).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" })
   : "";
+
+// Injury designation. Ported from js/ui.js:20-22,54-58 - missing from the
+// first cut of this page entirely, so Questionable, Doubtful, IR and PUP were
+// invisible on a lineup page whose whole job is start/sit. Only
+// `startable === false` showed, as a greyed row.
+const INJ = {
+  Out: ["out", "OUT"], Doubtful: ["dbt", "DBT"], Questionable: ["q", "Q"],
+  IR: ["ir", "IR"], PUP: ["pup", "PUP"], Sus: ["sus", "SUS"],
+  COV: ["cov", "COV"], NA: ["out", "N/A"],
+};
+function injChip(s) {
+  if (!s) return "";
+  const [cls, label] = INJ[s] || ["q", String(s).slice(0, CHIP_FALLBACK_LEN).toUpperCase()];
+  return ` <span class="chip ${cls}" title="${esc(s)}">${esc(label)}</span>`;
+}
 
 // THE INFORMATION, NOT THE COLUMN.
 //
@@ -26,27 +46,33 @@ const kick = (ms) => typeof ms === "number"
 //
 // So the opponent folds and its payload does not: a compact marker rides in
 // the name cell and is shown only at the widths where the column is gone.
+// The kickoff TIME is part of that payload and was left behind in the first
+// cut: it lived only in the .opp cell, which is display:none at <=460px, so
+// every phone width lost it with no substitute. On a phone, WHEN a player
+// plays is what decides whether a change is still possible.
 function nameMark(p) {
   if (p.locked) return ' <span class="nmark lock" title="already kicked off">&#128274;</span>';
   if (!p.opponent) return ' <span class="nmark bye">bye</span>';
+  if (p.game?.kickoffUTC) return ` <span class="nmark kick">${esc(kick(p.game.kickoffUTC))}</span>`;
   return "";
 }
 
 function playerRow(p, slot) {
   if (!p) return `<tr><td class="slot">${esc(slot)}</td>
-    <td colspan="4" class="note">— empty —</td></tr>`;
+    <td colspan="5" class="note">— empty —</td></tr>`;
   const f = leadFlag(p);
   const dead = p.startable === false;
   return `<tr${dead ? ' class="dead"' : ""}>
     <td class="slot">${esc(slot)}</td>
     <td class="nm">${esc(p.name)}<span class="pos">${esc(p.pos)}</span>${
-      f ? ` <span class="pos">${esc(chipLabel(f))}</span>` : ""}${nameMark(p)}</td>
+      f ? ` <span class="chip ${esc(SEV_CLS[f.severity] || "q")}" title="${esc(flagTitle(f))}">${
+        esc(chipLabel(f))}</span>` : ""}${nameMark(p)}</td>
     <td class="fold-md">${esc(p.team || "")}</td>
     <td class="opp fold-sm">${p.opponent ? esc(p.opponent) : '<span class="bye">bye</span>'}${
       p.locked ? ' <span class="lock" title="already kicked off">&#128274;</span>'
                : p.game?.kickoffUTC ? `<span class="kick">${esc(kick(p.game.kickoffUTC))}</span>` : ""}</td>
     <td class="num fold-lg">${typeof p.vor === "number" ? sgn(p.vor) : ""}</td>
-    <td class="pt">${p.hasProjection ? `${p.floorOnly ? "≥" : ""}${n1(p.pts)}` : '<span class="note">n/a</span>'}</td>
+    <td class="pt">${p.hasProjection ? `${p.floorOnly ? "≥" : ""}${n1(p.pts)}` : '<span class="note">n/a</span>'}${injChip(p.injury)}</td>
   </tr>`;
 }
 
@@ -58,8 +84,10 @@ function lineupPage(L) {
   if (!L) return stub("No league selected.");
   const pairs = lineupPairs(L.slots, L.starters, L.byId);
   const bench = benchOf(L.roster, L.starters);
+  // NOT `.cols`. A six-column table needs the full content width - see the
+  // measurement note on .cols in app.css. These stack at every width.
   return `
-    <div class="cols">
+    <div class="stack">
       <section class="card flush">
         <h2>Starting</h2>
         <table>${HEAD}<tbody>${pairs.map(([s, p]) => playerRow(p, s)).join("")}</tbody></table>

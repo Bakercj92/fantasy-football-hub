@@ -238,7 +238,7 @@ const ok = (name, cond, detail = "") => {
 
   // ---- 5. widths, including the band nobody measured ---------------------
   console.log("\nCOLUMN WIDTHS (320-1280, including the unmeasured 560-900 band)");
-  for (const w of [320, 360, 390, 560, 768, 820, 1024, 1280]) {
+  for (const w of [320, 360, 390, 560, 768, 820, 1024, 1280, 1440]) {
     const { page, browser, server, errors } = await open({ width: w, height: 900, hash: "#/joop/lineup" });
     const m = await page.evaluate(() => {
       const cell = document.querySelector("[data-content] tbody tr .nm");
@@ -283,6 +283,65 @@ const ok = (name, cond, detail = "") => {
     if ([390, 768, 1280].includes(w)) {
       await page.screenshot({ path: path.join(SHOTS, `v2-${w}.png`), fullPage: true });
     }
+    await browser.close(); server.close();
+  }
+
+  // ---- 6. the audit fixes ------------------------------------------------
+  console.log("\nAUDIT FIXES");
+  {
+    const { page, browser, server } = await open({ width: 1280, height: 900, hash: "#/joop/lineup" });
+    const cells = await page.evaluate(() => {
+      // PER TABLE. The page has two, so counting thead cells across the whole
+      // content region double-counts and compares 6 against 12.
+      const bad = [];
+      for (const tbl of document.querySelectorAll("[data-content] table")) {
+        const head = tbl.querySelectorAll("thead td").length;
+        for (const r of tbl.querySelectorAll("tbody tr")) {
+          const span = [...r.children].reduce((n, c) => n + (c.colSpan || 1), 0);
+          if (span !== head) bad.push(`${r.textContent.trim().slice(0, 24)}: ${span} vs ${head}`);
+        }
+      }
+      return { bad };
+    });
+    ok("every row spans the same number of columns as its own table head",
+      cells.bad.length === 0, cells.bad.join("; "));
+
+    const inj = await page.evaluate(() =>
+      [...document.querySelectorAll("[data-content] .pt .chip")].map((c) => c.textContent));
+    ok("injury designations render on the lineup page", inj.length > 0, "no injury chips found");
+
+    const nav = await page.evaluate(() => {
+      const a = [...document.querySelectorAll(".railbtn")];
+      return { allAnchors: a.every((n) => n.tagName === "A" && n.getAttribute("href")),
+               hrefs: a.map((n) => n.getAttribute("href")) };
+    });
+    ok("navigation is real links, not click handlers", nav.allAnchors, JSON.stringify(nav.hrefs));
+    ok("league-scoped links carry the league you are looking at",
+      nav.hrefs.includes("#/joop/wire"), JSON.stringify(nav.hrefs));
+
+    // the status disclosure must survive a repaint
+    await page.evaluate(() => { document.querySelector(".status").open = true; });
+    await page.evaluate(() => window.__ffh_repaint());
+    await page.waitForTimeout(150);
+    const stillOpen = await page.evaluate(() => document.querySelector(".status").open);
+    ok("an opened status panel survives the 30-second repaint", stillOpen === true);
+    await browser.close(); server.close();
+  }
+  {
+    const { page, browser, server } = await open({ width: 390, height: 844, hash: "#/joop/lineup" });
+    const marks = await page.evaluate(() => {
+      const vis = (el) => el && getComputedStyle(el).display !== "none";
+      return {
+        oppHidden: !vis(document.querySelector("[data-content] .opp")),
+        kick: [...document.querySelectorAll("[data-content] .nmark.kick")].filter(vis).length,
+        lock: [...document.querySelectorAll("[data-content] .nmark.lock")].filter(vis).length,
+      };
+    });
+    ok("phone: the Opp column is folded", marks.oppHidden);
+    ok("phone: kickoff times survive the fold, inline with the name", marks.kick > 0,
+      `${marks.kick} inline kickoff marks`);
+    ok("phone: lock markers survive the fold", marks.lock > 0, `${marks.lock} inline locks`);
+    await page.screenshot({ path: path.join(SHOTS, "v2-phone-final.png"), fullPage: true });
     await browser.close(); server.close();
   }
 

@@ -34,13 +34,14 @@ export function renderError(err) {
 export function mount({ leagues, week, season, gradedWeek, day }) {
   const navItems = Object.entries(ROUTES).map(([key, r]) => ({ key, ...r }));
 
-  const rail = navItems.map(({ key, label, ico }) =>
-    `<button class="railbtn" data-nav="${key}" ${navVisible(key, day) ? "" : "hidden"}>
-      <span class="ico" aria-hidden="true">${ico}</span><span>${esc(label)}</span></button>`).join("");
-
-  const bottom = navItems.map(({ key, label, ico }) =>
-    `<button class="navbtn" data-nav="${key}" ${navVisible(key, day) ? "" : "hidden"}>
-      <span class="ico" aria-hidden="true">${ico}</span><span>${esc(label)}</span></button>`).join("");
+  // ANCHORS, NOT BUTTONS. A site whose navigation cannot be middle-clicked,
+  // cmd-clicked or copied as a link is a document with click handlers. The
+  // href is the whole mechanism: there is no navigation JavaScript at all,
+  // the browser changes the hash and the router hears it.
+  const item = (cls) => navItems.map(({ key, label, ico }) =>
+    `<a class="${cls}" data-nav="${key}" href="${href(key)}" ${navVisible(key, day) ? "" : "hidden"}>
+      <span class="ico" aria-hidden="true">${ico}</span><span>${esc(label)}</span></a>`).join("");
+  const rail = item("railbtn"), bottom = item("navbtn");
 
   document.querySelector("#root").innerHTML = `
     <div class="shell">
@@ -57,7 +58,7 @@ export function mount({ leagues, week, season, gradedWeek, day }) {
         <main class="main">
           <div data-status></div>
           <div data-leagues class="leagues">${leagues.map((l) =>
-            `<button class="lg" data-league="${esc(l.key)}">${esc(l.name)}</button>`).join("")}</div>
+            `<a class="lg" data-league="${esc(l.key)}" href="#/${esc(l.key)}/lineup">${esc(l.name)}</a>`).join("")}</div>
           <div class="page-head">
             <h1 class="page-title" data-title></h1>
             <div class="page-sub" data-sub></div>
@@ -80,12 +81,10 @@ export function mount({ leagues, week, season, gradedWeek, day }) {
   return el;
 }
 
-/** Wire navigation. Links are set as real hrefs on click so middle-click and
- *  copy-link behave; the router owns what happens next. */
-export function wire({ onNav, onLeague }) {
-  el.navs.forEach((b) => b.addEventListener("click", () => onNav(b.dataset.nav)));
-  el.lgs.forEach((b) => b.addEventListener("click", () => onLeague(b.dataset.league)));
-}
+/** Nothing to wire for navigation - it is hrefs. Kept as the seam for the
+ *  interactive handlers phases 3 and 4 bring (compare selection, disclosure
+ *  rows), so those do not have to reach into the shell's internals. */
+export function wire() {}
 
 /** Reflect the current route in the chrome. Class and attribute changes only -
  *  nothing here rebuilds a node. */
@@ -94,11 +93,18 @@ export function setRoute(route, { day } = {}) {
   el.navs.forEach((b) => {
     b.toggleAttribute("hidden", !navVisible(b.dataset.nav, day ?? new Date().getDay())
       && b.dataset.nav !== route.page);           // never hide the page you are on
+    // A league-scoped link carries the league you are currently looking at, so
+    // switching page keeps your team; a global link never carries one.
+    b.setAttribute("href", href(b.dataset.nav, route.league));
     if (b.dataset.nav === route.page) b.setAttribute("aria-current", "page");
     else b.removeAttribute("aria-current");
   });
-  el.lgs.forEach((b) =>
-    b.setAttribute("aria-current", String(b.dataset.league === route.league)));
+  el.lgs.forEach((b) => {
+    b.setAttribute("aria-current", String(b.dataset.league === route.league));
+    // Switching league keeps the page you are on, rather than dumping you back
+    // to a fixed one.
+    b.setAttribute("href", href(r.scope === "league" ? route.page : "lineup", b.dataset.league));
+  });
   el.leagues.hidden = r.scope !== "league";
   el.title.textContent = r.label;
   el.sub.textContent = r.sub;
@@ -106,11 +112,21 @@ export function setRoute(route, { day } = {}) {
 
 export function setContent(html) { el.content.innerHTML = html; }
 
+let statusSig = null;
 export function setStatus(model) {
+  // THE 30-SECOND REPAINT MUST NOT SHUT THIS UNDER THE READER. The kickoff
+  // watcher repaints every half minute through a Sunday; rebuilding the
+  // <details> each time collapsed a panel somebody had just opened. Skip the
+  // rewrite when nothing changed, and carry the open state across when it did.
+  const sig = JSON.stringify(model);
+  if (sig === statusSig) return;
+  const prev = el.status.querySelector("details");
+  const wasOpen = prev ? prev.open : model.level !== "ok";
+  statusSig = sig;
   const cls = model.level === "bad" ? "status has-bad" : model.level === "warn" ? "status has-warn" : "status";
   // Opened by default when something is wrong; a clean load stays folded.
   el.status.innerHTML = `
-    <details class="${cls}" ${model.level === "ok" ? "" : "open"}>
+    <details class="${cls}" ${wasOpen ? "open" : ""}>
       <summary><span class="dot"></span>${esc(model.summary)}<span class="more">details</span></summary>
       <div class="panel">${model.rows.map((r) =>
         `<div class="srow ${r.level === "ok" ? "" : r.level}">${r.text}</div>`).join("")}</div>

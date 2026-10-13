@@ -37,8 +37,8 @@ t("change 1: the data fetches go through the seam", () => {
 });
 
 t("change 2: the decision log is still read-only", () => {
-  assert.ok(/const LOG_DISABLED = false;/.test(pipeline), "the kill switch is missing");
-  assert.ok(/LOG_DISABLED && recordLineup\(\{/.test(pipeline), "recordLineup is not gated");
+  assert.ok(/const LOG_ENABLED = false;/.test(pipeline), "the kill switch is missing");
+  assert.ok(/LOG_ENABLED && recordLineup\(\{/.test(pipeline), "recordLineup is not gated");
   assert.ok(!/^\s*recordMissed\(\{/m.test(pipeline), "recordMissed is live again");
 });
 
@@ -58,9 +58,14 @@ t("every engine import points out of v2, never inside it", () => {
   assert.deepStrictEqual(bad, [], `these should be ../js/: ${bad.join(", ")}`);
 });
 
-t("the engine modules themselves are untouched", () => {
+t("the engine modules - and ui.js, the reference - are untouched", () => {
   // Presentation-only means exactly this. If one of these moves, the rebuild
   // has quietly become an engine change.
+  //
+  // js/ui.js is pinned for a different reason: it is the reference
+  // implementation for all ten lifted behaviours, and the differential suite
+  // covers only two of them. Unpinned, the one file the port is judged
+  // against was the one file that could move without failing anything.
   const pins = JSON.parse(read("../v2/.engine-pins.json"));
   for (const [file, want] of Object.entries(pins)) {
     const got = createHash("sha256").update(read(`../${file}`)).digest("hex");

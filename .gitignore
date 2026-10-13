@@ -27,3 +27,11 @@ _to_delete/
 
 # Render-harness screenshots (SHOT=1). Local looking-at-it output.
 test/render/shots/
+
+# Render-harness working copies. `node test/render/setup.mjs` rebuilds both
+# from this repo and from upstream; committing them would ship a stale copy of
+# the site and 5 MB of other people's CSVs.
+test/render/site/
+test/render/up/
+test/render/node_modules/
+test/render/package*.json

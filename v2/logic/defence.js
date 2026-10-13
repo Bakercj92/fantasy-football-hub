@@ -35,8 +35,15 @@ export const DEF_KINDS = LADDER.map((r) => r.kind);
 
 /** Kinds where the row is reporting work to do rather than a checked-and-quiet
  *  seat. Mirrors `d.counts` from defStream(), which drives both the styling
- *  and wireTally() - one field, read in one place. */
-export const DEF_ACTIONABLE_KINDS = new Set(["empty", "marginal", "actionable"]);
+ *  and wireTally() - one field, read in one place.
+ *
+ *  MARGINAL IS NOT IN HERE. waivers.js:353 defines marginal as gap < DEF_FLOOR
+ *  and :357 sets counts only when gap >= DEF_FLOOR, so the two are mutually
+ *  exclusive by construction: a sub-precision edge is rendered and styled and
+ *  deliberately not counted as work. Listing it here was a wrong claim in the
+ *  file meant to be the authority on this ladder (audit 2026-10-13); nothing
+ *  consumed it yet, which is why no test caught it. */
+export const DEF_ACTIONABLE_KINDS = new Set(["empty", "actionable"]);
 
 /**
  * Classify a defStream() result. Returns null when there is no row at all,

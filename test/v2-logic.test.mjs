@@ -87,6 +87,37 @@ t("counts mirrors defStream's own field, and the actionable set agrees with it",
   assert.strictEqual(DEF_KINDS.length, 10);
 });
 
+t("MARGINAL IS NOT WORK. waivers.js:353/:357 make marginal and counts exclusive", () => {
+  // marginal is gap < DEF_FLOOR; counts is gap >= DEF_FLOOR. A sub-precision
+  // edge is rendered and styled and deliberately NOT counted. The set claimed
+  // to mirror `counts` while including marginal - a wrong claim in the file
+  // that is meant to be the authority on this ladder (audit 2026-10-13).
+  assert.ok(!DEF_ACTIONABLE_KINDS.has("marginal"));
+  assert.deepStrictEqual([...DEF_ACTIONABLE_KINDS].sort(), ["actionable", "empty"]);
+});
+
+t("MUTATION HOLE: unprojected outranks a locked starter", () => {
+  // The one adjacent pair in the ladder the differential cases never made
+  // compete, so swapping these two rungs survived a 30-mutation sweep. A
+  // defence that is BOTH unpriced and locked must report that it is not priced
+  // - "is locked" implies a gap that was never measured.
+  const v = defVerdict(D({ unprojected: true, current: { name: "LV", pts: 4.3, locked: true } }));
+  assert.strictEqual(v.kind, "unprojected");
+});
+
+t("MUTATION HOLE: the optimal lineup is scanned BEFORE the roster", () => {
+  // signals.js declares this order load-bearing, but the original test passed
+  // the SAME object in both lists, which proves dedupe happens and says
+  // nothing about which copy wins. Distinguishable objects, same id.
+  const fromOptimal = { id: "x", name: "from-optimal", pos: "WR", flags: [{ severity: "high", kind: "absent", text: "no usage" }] };
+  const fromRoster = { id: "x", name: "from-roster", pos: "WR",
+    flags: [{ severity: "high", kind: "thin", text: "one game" }] };
+  const { shown, total } = signalRows([{ slot: "WR", player: fromOptimal }], [fromRoster]);
+  assert.strictEqual(total, 1, "deduped");
+  assert.strictEqual(shown[0].p.name, "from-optimal");
+  assert.strictEqual(shown[0].f.kind, "absent");
+});
+
 // --------------------------------------------------------------------------
 // Signals
 // --------------------------------------------------------------------------
