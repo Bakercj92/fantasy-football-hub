@@ -39,7 +39,8 @@ function callsCard(L) {
   const rows = pairs.map((pair, i) => {
     const { in: inP, out: outP, forced, delta } = pair;
     const head = forced
-      ? `<b>Sit ${esc(outP.name)}</b> <span class="over">&mdash; ruled ${esc(outP.injury || "out")}</span>${
+      ? `<b>Sit ${esc(outP.name)}</b> <span class="over">&mdash; ${
+          outP.injury ? `ruled ${esc(outP.injury)}` : "not priced this week"}</span>${
           inP ? ` <span class="over">· start ${esc(inP.name)}</span>` : ""}`
       : `<b>Start ${esc(inP?.name ?? "—")}</b>${
           outP ? ` <span class="over">over ${esc(outP.name)}</span>` : ""}`;
@@ -50,11 +51,32 @@ function callsCard(L) {
     // FORCED CALLS IGNORE THE THRESHOLD, and the copy has to say why: the feed
     // still publishes a projection for a ruled-out player, because that is
     // what he would score if he played. He will not. (ui.js:701-706)
-    const why = forced
-      ? `${esc(outP.name)} is listed <b>${esc(outP.injury)}</b>. The feed still publishes a
+    // TWO KINDS OF FORCED CALL, AND THEY ARE NOT THE SAME SENTENCE.
+    //
+    // `forced` means startable === false, which happens two ways. A player
+    // ruled out carries a designation AND a projection, and the sentence about
+    // the feed still publishing one is the whole point of the block. A player
+    // the feed has never heard of carries NEITHER - pipeline.js builds him
+    // with injury null and pts null - and the ruled-out sentence rendered as
+    // "is listed . The feed still publishes a projection for him (-)",
+    // asserting a measurement that does not exist. That em dash is the exact
+    // tell js/vacancy.js:199-201 exists to prevent.
+    // COMPUTED ONLY WHEN FORCED. The first cut built this eagerly, and its
+    // non-unpriced branch reads outP.name - which is null on a call INTO AN
+    // EMPTY SEAT, where there is nobody leaving. That threw. `forced` is
+    // false there, so the value was never used; it was evaluated anyway.
+    const unpriced = forced && !outP.hasProjection;
+    const forcedWhy = !forced ? "" : unpriced
+      ? `The projection feed has no entry for <b>${esc(outP.name)}</b> at all, so this page
+         cannot price him and treats him as unplayable rather than guessing. That is why this
+         call ignores the threshold. Check the seat yourself before acting — missing
+         data is not the same as a bad player.`
+      : `${esc(outP.name)} is listed <b>${esc(outP.injury)}</b>. The feed still publishes a
          projection for him (${n1(outP.pts)}) because that is what he would score if he played
          &mdash; he will not, so his real total is zero. That is why this call ignores the
-         threshold.
+         threshold.`;
+    const why = forced
+      ? `${forcedWhy}
          ${inP ? `${esc(inP.name)} projects <b>${n1(inP.pts)}</b>${
            inP.opponent ? ` vs ${esc(inP.opponent)}` : ""}.` : ""}
          ${inP && vegasPhrase(inP) ? `<div class="veg">${vegasPhrase(inP)}</div>` : ""}`
@@ -168,7 +190,8 @@ const HEAD = `<thead><tr>
   <td class="num fold-lg">VOR</td><td class="pt">Proj</td></tr></thead>`;
 
 function nameMark(p) {
-  if (p.locked) return ' <span class="nmark lock" title="already kicked off">&#128274;</span>';
+  if (p.locked) return ` <span class="nmark lock" title="Kicked off ${
+    esc(kick(p.game?.kickoffUTC))} — Sleeper will not move him now">&#128274;</span>`;
   if (!p.opponent) return ' <span class="nmark bye">bye</span>';
   if (p.game?.kickoffUTC) return ` <span class="nmark kick">${esc(kick(p.game.kickoffUTC))}</span>`;
   return "";
@@ -187,7 +210,13 @@ function detailPanel(p) {
     ["Over replacement", typeof p.vor === "number"
       ? `${sgn(p.vor)} <span class="hint">against the best free ${esc(p.pos)} in this league</span>`
       : "—"],
-    ["Status", p.injury ? `${esc(p.injury)}${p.startable === false ? " — will not play" : ""}` : "active"],
+    // STARTABLE FIRST, INJURY SECOND. Keyed on injury alone, an unpriced
+    // starter - injury null, startable false - printed "active" one card below
+    // the same page telling you to sit him.
+    ["Status", p.startable === false
+      ? `${p.injury ? `${esc(p.injury)} — ` : ""}will not play${
+          p.hasProjection ? "" : "; the feed has no entry for him"}`
+      : p.injury ? esc(p.injury) : "active"],
   ];
   const market = p.market?.posRank
     ? `<div class="mkt">Consensus has him at <b>${esc(p.market.posRank)}</b>${
@@ -202,7 +231,16 @@ function playerRows(p, slot, idPrefix) {
     return `<tr class="prow empty"><td class="slot">${esc(slot)}</td>
       <td colspan="${NCOLS - 1}" class="note">— empty —</td></tr>`;
   }
-  const f = leadFlag(p);
+  // THE ROW CHIP IS flags[0], NOT THE FIRST QUALIFYING FLAG.
+  //
+  // The signals CARD drops low severity except a resolved absence, which is
+  // ui.js:495 and correct there. Applying that filter to the chip deleted the
+  // thin-sample marker from both tables entirely: "only 1 game of usage" is
+  // the one low-severity non-absent flag js/signals.js produces, and the flag
+  // families are mutually exclusive on playedLast/played, so it is always that
+  // player's ONLY flag. ui.js:752 read flags[0] unconditionally. The card and
+  // the chip want different predicates and now have them.
+  const f = p.flags?.[0] || null;
   const id = `${idPrefix}-${esc(p.id)}`;
   const dead = p.startable === false;
   return `<tr class="prow${dead ? " dead" : ""}${p.locked ? " locked" : ""}" data-row="${id}">
@@ -213,7 +251,7 @@ function playerRows(p, slot, idPrefix) {
         esc(chipLabel(f))}</span>` : ""}${nameMark(p)}</td>
     <td class="fold-md">${esc(p.team || "")}</td>
     <td class="opp fold-sm">${p.opponent ? esc(p.opponent) : '<span class="bye">bye</span>'}${
-      p.locked ? ' <span class="lock" title="already kicked off">&#128274;</span>'
+      p.locked ? ` <span class="lock" title="Kicked off ${esc(kick(p.game?.kickoffUTC))} — Sleeper will not move him now">&#128274;</span>`
                : p.game?.kickoffUTC ? `<span class="kick">${esc(kick(p.game.kickoffUTC))}</span>` : ""}</td>
     <td class="num fold-lg">${typeof p.vor === "number" ? sgn(p.vor) : ""}</td>
     <td class="pt">${p.hasProjection ? `${p.floorOnly ? "≥" : ""}${n1(p.pts)}`
@@ -243,4 +281,4 @@ export function lineupPage(L, state) {
   return callsCard(L) + signalsCard(L) + lockedCard(L) + rosterTables(L);
 }
 
-export { NCOLS, playerRows, detailPanel };
+export { NCOLS, COLS, playerRows, detailPanel, callsCard, signalsCard, lockedCard };

@@ -580,10 +580,13 @@ const ok = (name, cond, detail = "") => {
       return { overflow: doc.scrollWidth - doc.clientWidth,
                detVisible: !det.hidden,
                detWidth: Math.round(det.getBoundingClientRect().width),
-               tap: Math.round(document.querySelector(".prow .rowtog").getBoundingClientRect().height) };
+               // THE ROW is the tap target - the padding lives on the td, so
+               // measuring the bare button under-reports it.
+               tap: Math.round(document.querySelector(".prow:not(.empty)").getBoundingClientRect().height) };
     });
     ok("phone: no horizontal scroll with a row open", m.overflow <= 0, `${m.overflow}px`);
     ok("phone: the detail panel spans the table", m.detVisible && m.detWidth > 300, JSON.stringify(m));
+    ok("phone: a roster row is a thumb-sized tap target", m.tap >= 40, `${m.tap}px`);
     await page.screenshot({ path: path.join(SHOTS, "v2-lineup-phone.png"), fullPage: true });
     await browser.close(); server.close();
   }
@@ -653,6 +656,54 @@ const ok = (name, cond, detail = "") => {
     const t2 = await page.evaluate(() => document.querySelector("[data-content]").textContent);
     ok("a vacancy outage removes the block rather than breaking the page",
       !/Just came free/.test(t2) && t2.length > 40);
+    await browser.close(); server.close();
+  }
+
+  // ---- 11. the phase-3 audit fixes ---------------------------------------
+  console.log("\nPHASE 3 AUDIT FIXES");
+  {
+    const { page, browser, server } = await open({ width: 1100, height: 900, hash: "#/joop/wire" });
+    const before = await page.evaluate(() => {
+      const b = document.querySelector(".disc .dischd");
+      b.click();
+      return { id: b.getAttribute("aria-controls"), open: b.getAttribute("aria-expanded") };
+    });
+    await page.evaluate(() => { window.location.hash = "#/bku/wire"; });
+    await page.waitForTimeout(350);
+    const after = await page.evaluate(() => {
+      const b = document.querySelector(".disc .dischd");
+      return b ? { id: b.getAttribute("aria-controls"), open: b.getAttribute("aria-expanded") } : null;
+    });
+    ok("OPEN STATE DOES NOT FOLLOW YOU INTO ANOTHER LEAGUE",
+      !after || after.open !== "true",
+      `opened ${before.id} in joop, ${after && after.id} came up open in bku`);
+
+    // ...but it still survives a re-solve on the same page.
+    await page.evaluate(() => document.querySelector(".disc .dischd").click());
+    await page.evaluate(() => window.__ffh_repaint());
+    await page.waitForTimeout(200);
+    const same = await page.evaluate(() =>
+      document.querySelector(".disc .dischd").getAttribute("aria-expanded"));
+    ok("...and still survives a re-solve on the page you are on", same === "true");
+    await browser.close(); server.close();
+  }
+  {
+    // The unpriced-starter row: the copy defect that put a false sentence on
+    // the page. The fixture carries a roster id the feed never priced.
+    const { page, browser, server } = await open({ width: 1100, height: 900, hash: "#/joop/lineup" });
+    const t3 = await page.evaluate(() => {
+      const out = [];
+      for (const b of document.querySelectorAll(".prow:not(.empty) .rowtog")) b.click();
+      for (const d of document.querySelectorAll(".pdet")) out.push(d.textContent.replace(/\s+/g, " "));
+      return { panels: out, body: document.querySelector("[data-content]").textContent.replace(/\s+/g, " ") };
+    });
+    ok("no panel says a ruled-out player is active",
+      !t3.panels.some((p) => /will not play/.test(p) && /\bactive\b/.test(p)),
+      t3.panels.find((p) => /will not play/.test(p) && /\bactive\b/.test(p)));
+    ok("nothing on the page asserts a projection the feed never published",
+      !/publishes a projection for him \( ?\u2014 ?\)/.test(t3.body) && !/is listed \./.test(t3.body));
+    ok("no placeholder in any open detail panel",
+      !t3.panels.some((p) => /\bundefined\b|\bNaN\b|\[object Object\]/.test(p)));
     await browser.close(); server.close();
   }
 

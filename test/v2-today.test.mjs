@@ -1,7 +1,7 @@
 // The Today model. The thing most worth testing here is what it REFUSES to do:
 // no cross-league ranking, no single points scale, no class promoted twice.
 import assert from "node:assert";
-import { todayModel, callDeadline, claimsLead, waiverDay, LOCK_SOON_MS, WAIVER_DAY, WATCH_PER_LEAGUE }
+import { todayModel, callDeadline, itemDeadline, claimsLead, waiverDay, LOCK_SOON_MS, WAIVER_DAY, WATCH_PER_LEAGUE }
   from "../v2/logic/today.js";
 import { itemLine } from "../v2/pages.js";
 
@@ -345,14 +345,25 @@ t("A CLAIM HAS A DEADLINE TOO, and it promotes on the same window", () => {
     "it keeps its kind, so it still links to the wire");
 });
 
-t("a defence stream promotes on the free defence's kickoff", () => {
+t("A DEFENCE STREAM HAS NO KNOWABLE DEADLINE, and the model says so", () => {
+  // The first version of this test asserted the opposite and passed, because
+  // its fixture hand-wrote `best.game` - a shape the engine does not emit.
+  // defStream() builds best as {id, name, team, pts, opponent} only
+  // (js/waivers.js:330-331), so no kickoff reaches this layer at all.
+  // Asserting the real behaviour here is what stops the fiction coming back.
   const def = { slot: "DEF", current: { name: "LV", pts: 4 },
-                best: { name: "KC", pts: 9, game: { kickoffUTC: soon } },
+                best: { id: "d", name: "KC", team: "KC", pts: 9, opponent: "LV" },
                 gap: 5, actionable: true, counts: true };
   const L = league("joop", "Joop", { waivers: { any: true, upgrades: [], risers: [], def } });
   const m = todayModel(stateOf(L), { now: NOW, day: 0 });
-  assert.strictEqual(cls(m, "locking").count, 1);
-  assert.strictEqual(cls(m, "locking").leagues[0].items[0].kind, "def");
+  assert.strictEqual(cls(m, "locking"), undefined, "nothing to promote on");
+  assert.strictEqual(cls(m, "claims").count, 1);
+  assert.strictEqual(itemDeadline({ kind: "def", verdict: { best: def.best } }), null);
+  // And a hand-written game must not resurrect it - the engine shape is the
+  // contract, not whatever a fixture happens to carry.
+  assert.strictEqual(
+    itemDeadline({ kind: "def", verdict: { best: { ...def.best, game: { kickoffUTC: soon } } } }),
+    null);
 });
 
 t("a claim whose man has already kicked off is not 'soon'", () => {

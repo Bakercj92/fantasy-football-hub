@@ -102,7 +102,21 @@ export function itemDeadline(it) {
   switch (it.kind) {
     case "call":  return it.deadline ?? null;
     case "claim": return soonestKickoff([it.player, it.over]);
-    case "def":   return soonestKickoff([it.verdict?.best]);
+    // NO DEADLINE FOR A DEFENCE STREAM, AND SAYING SO IS THE HONEST ANSWER.
+    //
+    // A free defence has a kickoff and the decision dies on it, exactly like a
+    // lineup swap. But defStream() builds `best` as {id, name, team, pts,
+    // opponent} (js/waivers.js:330-331) - no `game`, so no kickoff reaches
+    // this layer. The first cut read `it.verdict.best.game?.kickoffUTC`, which
+    // is always undefined, so the defence half of the widening never fired -
+    // and its test passed only because the fixture hand-wrote a shape the
+    // engine does not emit.
+    //
+    // Carrying the kickoff would mean changing waivers.js, which this rebuild
+    // does not do. Returning null is correct for what is actually knowable
+    // here; the limitation is recorded in the handoff rather than papered over
+    // with a value that is always undefined.
+    case "def":   return null;
     default:      return null;
   }
 }

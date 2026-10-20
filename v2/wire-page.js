@@ -277,12 +277,25 @@ export function wirePage(L, state) {
   if (!L) return `<section class="card quiet"><div class="stub">No league selected.</div></section>`;
   const body = vacancyCard(L) + waiverCard(L, state);
   if (body) return body;
+  // ONLY CLAIM WHAT WAS ACTUALLY MEASURED.
+  //
+  // "nobody's job opened" was asserted unconditionally, but the vacancy layer
+  // fails SILENTLY by design - js/vacancy.js:71-77 returns ok:false and the
+  // block simply disappears. On a load where that fetch 404s, the page was
+  // reporting a check it had not run. ui.js made no claim at all here: the
+  // block vanished. The sentence is assembled from what is actually in hand.
+  const vacOut = !L.vacancies || L.vacancies.ok === false;
+  const checked = ["no free agent beats anyone you are starting"];
+  if (!vacOut) checked.push("nobody's job opened");
+  checked.push("nobody is trending up sharply enough to be worth it");
   return `<section class="card quiet">
-    <div class="ok">✓ Wire checked — nothing worth a claim.</div>
-    <div class="note">No free agent beats anyone you are starting, nobody's job opened, and
-      nobody is trending up sharply enough to be worth it. There is no browsable free-agent list
-      here on purpose: a list you have to read is a list you will stop reading.</div>
+    <div class="ok">\u2713 Wire checked \u2014 nothing worth a claim.</div>
+    <div class="note">${checked.slice(0, -1).join(", ")} and ${checked[checked.length - 1]}.
+      ${vacOut ? `<b>The depth-chart layer did not load this time</b>, so whose job just opened
+        was not checked at all \u2014 that is a gap in this answer, not a finding.` : ""}
+      There is no browsable free-agent list here on purpose: a list you have to read is a list
+      you will stop reading.</div>
   </section>`;
 }
 
-export { defenceRow };
+export { defenceRow, waiverCard, vacancyCard, upgradeRow, riserRow };

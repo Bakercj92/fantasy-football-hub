@@ -150,7 +150,17 @@ export function setRoute(route, { day } = {}) {
 // opened shut under him, repeatedly, without being touched.
 //
 // Folds declare `data-fold="<name>"`; their open state is carried across.
-export function setContent(html) {
+let contentScope = null;
+export function setContent(html, scope = null) {
+  // OPEN STATE BELONGS TO ONE LEAGUE ON ONE PAGE.
+  //
+  // Four of the five disclosure families are keyed positionally - call-0,
+  // wu-0, vac-0 - because the things they describe have no stable id. That is
+  // fine within a page: a re-solve keeps the same ordering. Across a league
+  // switch it is not: restoring "wu-0" reopens the first claim of a different
+  // team's wire. Only restore when the scope is unchanged.
+  const sameScope = scope === null || scope === contentScope;
+  contentScope = scope;
   const folds = new Set();
   for (const d of el.content.querySelectorAll("details[data-fold]")) {
     if (d.open) folds.add(d.dataset.fold);
@@ -167,6 +177,7 @@ export function setContent(html) {
   for (const d of el.content.querySelectorAll("details[data-fold]")) {
     if (folds.has(d.dataset.fold)) d.open = true;
   }
+  if (!sameScope) return;
   for (const id of discs) {
     const btn = el.content.querySelector(`[aria-controls="${CSS.escape(id)}"]`);
     if (btn) toggleDisclosure(btn);

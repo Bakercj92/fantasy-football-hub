@@ -29,7 +29,7 @@ function paintRoute({ scrollTop = false } = {}) {
   if (!mounted) return;
   shell.setRoute(route, { day });
   shell.setStatus(statusModel(state, state.leagues[route.league]));
-  shell.setContent(renderPage(route, state));
+  shell.setContent(renderPage(route, state), `${route.league || "-"}:${route.page}`);
   if (scrollTop) window.scrollTo(0, 0);
 }
 
