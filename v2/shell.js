@@ -81,10 +81,41 @@ export function mount({ leagues, week, season, gradedWeek, day }) {
   return el;
 }
 
-/** Nothing to wire for navigation - it is hrefs. Kept as the seam for the
- *  interactive handlers phases 3 and 4 bring (compare selection, disclosure
- *  rows), so those do not have to reach into the shell's internals. */
-export function wire() {}
+/** ONE DELEGATED HANDLER, INSTALLED ONCE.
+ *
+ *  Disclosures live inside [data-content], which is replaced wholesale on
+ *  every repaint - and paint() fires six-plus times in the first seconds and
+ *  again on every kickoff flip. Binding per-element after each render would
+ *  mean re-binding dozens of nodes on every tick and leaking a listener each
+ *  time one was missed. Delegation survives innerHTML, so it is bound here and
+ *  never again.
+ *
+ *  OPEN STATE IS CARRIED ACROSS A REPAINT the same way the folds are: a panel
+ *  the reader opened at 12:58 must still be open at 13:00 when a kickoff
+ *  re-solves the page under him. */
+export function wire() {
+  el.content.addEventListener("click", (ev) => {
+    // A link inside a row is a link, not a toggle.
+    if (ev.target.closest("a")) return;
+    const btn = ev.target.closest(".rowtog, .dischd");
+    const row = ev.target.closest(".prow");
+    const t = btn || (row && row.querySelector(".rowtog"));
+    if (!t) return;
+    ev.preventDefault();
+    toggleDisclosure(t);
+  });
+}
+
+function toggleDisclosure(btn) {
+  const id = btn.getAttribute("aria-controls");
+  const panel = id && el.content.querySelector(`#${CSS.escape(id)}`);
+  if (!panel) return;
+  const open = btn.getAttribute("aria-expanded") === "true";
+  btn.setAttribute("aria-expanded", String(!open));
+  panel.hidden = open;
+  const row = btn.closest(".prow");
+  if (row) row.classList.toggle("open", !open);
+}
 
 /** Reflect the current route in the chrome. Class and attribute changes only -
  *  nothing here rebuilds a node. */
@@ -120,14 +151,25 @@ export function setRoute(route, { day } = {}) {
 //
 // Folds declare `data-fold="<name>"`; their open state is carried across.
 export function setContent(html) {
-  const open = new Set();
+  const folds = new Set();
   for (const d of el.content.querySelectorAll("details[data-fold]")) {
-    if (d.open) open.add(d.dataset.fold);
+    if (d.open) folds.add(d.dataset.fold);
   }
+  // Disclosures are keyed by their panel id, which is derived from the player
+  // or call it belongs to - stable across a re-solve, unlike DOM position.
+  const discs = new Set();
+  for (const b of el.content.querySelectorAll("[aria-controls][aria-expanded='true']")) {
+    discs.add(b.getAttribute("aria-controls"));
+  }
+
   el.content.innerHTML = html;
-  if (!open.size) return;
+
   for (const d of el.content.querySelectorAll("details[data-fold]")) {
-    if (open.has(d.dataset.fold)) d.open = true;
+    if (folds.has(d.dataset.fold)) d.open = true;
+  }
+  for (const id of discs) {
+    const btn = el.content.querySelector(`[aria-controls="${CSS.escape(id)}"]`);
+    if (btn) toggleDisclosure(btn);
   }
 }
 

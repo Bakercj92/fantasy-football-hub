@@ -480,6 +480,182 @@ const ok = (name, cond, detail = "") => {
     await browser.close(); server.close();
   }
 
+  // ---- 9. the Lineup page ------------------------------------------------
+  console.log("\nLINEUP");
+  {
+    const { page, browser, server, errors } = await open({ width: 1280, height: 1100, hash: "#/joop/lineup" });
+    ok("no page errors", errors.length === 0, errors.join("\n       "));
+
+    const shape = await page.evaluate(() => {
+      const bad = [];
+      for (const tbl of document.querySelectorAll("[data-content] table")) {
+        const head = tbl.querySelectorAll("thead td").length;
+        for (const r of tbl.querySelectorAll("tbody tr")) {
+          const span = [...r.children].reduce((n, c) => n + (c.colSpan || 1), 0);
+          if (span !== head) bad.push(`${r.className}: ${span} vs ${head}`);
+        }
+      }
+      return {
+        bad,
+        calls: !!document.querySelector(".card.act, .card.quiet .ok"),
+        discs: document.querySelectorAll(".disc .dischd").length,
+        rows: document.querySelectorAll(".prow:not(.empty)").length,
+        dets: document.querySelectorAll(".pdet").length,
+        hiddenDets: [...document.querySelectorAll(".pdet")].every((d) => d.hidden),
+      };
+    });
+    ok("EVERY row spans its own table's head, detail rows included",
+      shape.bad.length === 0, shape.bad.join("; "));
+    ok("the calls block is on the page", shape.calls === true);
+    ok("every player row has a detail row", shape.dets === shape.rows,
+      `${shape.rows} rows, ${shape.dets} details`);
+    ok("details start closed", shape.hiddenDets === true);
+
+    // Open a roster row and read what came out.
+    const opened = await page.evaluate(() => {
+      const row = document.querySelector(".prow:not(.empty)");
+      row.querySelector(".rowtog").click();
+      const det = document.querySelector(".pdet");
+      return {
+        expanded: row.querySelector(".rowtog").getAttribute("aria-expanded"),
+        visible: !det.hidden,
+        keys: [...det.querySelectorAll("dt")].map((d) => d.textContent),
+        leaked: /\bundefined\b|\bNaN\b|\[object Object\]/.test(det.textContent),
+      };
+    });
+    ok("a roster row opens", opened.visible === true && opened.expanded === "true");
+    ok("...and carries the folded columns, not a repeat of the row",
+      ["Team", "Opponent", "Kickoff", "Projection"].every((k) => opened.keys.includes(k)),
+      opened.keys.join(", "));
+    ok("...with no placeholder leaked", opened.leaked === false);
+
+    // It must survive the kickoff repaint, like everything else.
+    await page.evaluate(() => window.__ffh_repaint());
+    await page.waitForTimeout(150);
+    const survived = await page.evaluate(() => {
+      const det = document.querySelector(".pdet");
+      return { visible: !det.hidden,
+               expanded: document.querySelector(".rowtog").getAttribute("aria-expanded") };
+    });
+    ok("an opened row survives a re-solve at one o'clock",
+      survived.visible === true && survived.expanded === "true", JSON.stringify(survived));
+
+    // A call disclosure too.
+    const call = await page.evaluate(() => {
+      const b = document.querySelector(".disc .dischd");
+      if (!b) return { none: true };
+      b.click();
+      const body = document.querySelector(`#${CSS.escape(b.getAttribute("aria-controls"))}`);
+      return { open: !body.hidden, text: body.textContent.trim().slice(0, 80),
+               leaked: /\bundefined\b|\bNaN\b/.test(body.textContent) };
+    });
+    ok("a call opens its reasoning", call.none || call.open === true);
+    ok("...with no placeholder leaked", call.none || call.leaked === false, call.text);
+
+    // Captured BEFORE the link test, which navigates on purpose.
+    await page.screenshot({ path: path.join(SHOTS, "v2-lineup-desktop.png"), fullPage: true });
+
+    // A link inside a row must stay a link, not get eaten by the row toggle.
+    const linkSafe = await page.evaluate(() => {
+      const a = document.createElement("a");
+      a.href = "#/joop/wire"; a.textContent = "x";
+      const row = document.querySelectorAll(".prow:not(.empty)")[1];
+      row.querySelector(".nm").appendChild(a);
+      const before = row.querySelector(".rowtog").getAttribute("aria-expanded");
+      a.click();
+      return { sameToggle: before === row.querySelector(".rowtog").getAttribute("aria-expanded"),
+               navigated: location.hash === "#/joop/wire" };
+    });
+    ok("a link inside a row is a link, not a toggle",
+      linkSafe.sameToggle === true && linkSafe.navigated === true, JSON.stringify(linkSafe));
+
+    await browser.close(); server.close();
+  }
+  {
+    const { page, browser, server } = await open({ width: 390, height: 844, hash: "#/joop/lineup" });
+    await page.evaluate(() => document.querySelector(".prow:not(.empty) .rowtog").click());
+    const m = await page.evaluate(() => {
+      const doc = document.documentElement;
+      const det = document.querySelector(".pdet");
+      return { overflow: doc.scrollWidth - doc.clientWidth,
+               detVisible: !det.hidden,
+               detWidth: Math.round(det.getBoundingClientRect().width),
+               tap: Math.round(document.querySelector(".prow .rowtog").getBoundingClientRect().height) };
+    });
+    ok("phone: no horizontal scroll with a row open", m.overflow <= 0, `${m.overflow}px`);
+    ok("phone: the detail panel spans the table", m.detVisible && m.detWidth > 300, JSON.stringify(m));
+    await page.screenshot({ path: path.join(SHOTS, "v2-lineup-phone.png"), fullPage: true });
+    await browser.close(); server.close();
+  }
+
+  // ---- 10. the Wire page -------------------------------------------------
+  console.log("\nWIRE");
+  {
+    const { page, browser, server, errors } = await open({ width: 1280, height: 1200, hash: "#/joop/wire" });
+    ok("no page errors", errors.length === 0, errors.join("\n       "));
+    const w = await page.evaluate(() => {
+      const discs = [...document.querySelectorAll(".disc .dischd")];
+      return {
+        cards: [...document.querySelectorAll("[data-content] .card > h2")].map((h) => h.textContent.trim().split("\n")[0]),
+        discs: discs.length,
+        heads: discs.map((d) => d.querySelector(".dl").textContent.replace(/\s+/g, " ").trim()),
+        subheads: [...document.querySelectorAll(".subhd")].map((h) => h.textContent.trim()),
+        body: document.querySelector("[data-content]").textContent,
+      };
+    });
+    ok("the wire has rows", w.discs > 0, JSON.stringify(w.cards));
+    ok("THE BID REFUSAL SURVIVED", /No bid figure here, deliberately/.test(w.body));
+    ok("the defence row says projection gap, not matchup read",
+      !/\bStream\b/.test(w.body) || /projection gap, not a matchup read/.test(w.body)
+      || /Nothing between them|better bet|already played|not priced|is locked|Marginal/.test(w.body));
+    ok("no placeholder leaked anywhere on the wire",
+      !/\bundefined\b|\bNaN\b|\[object Object\]/.test(w.body), w.body.slice(0, 200));
+
+    // Every disclosure must open and say something.
+    const opened = await page.evaluate(() => {
+      const out = [];
+      for (const b of document.querySelectorAll(".disc .dischd")) {
+        b.click();
+        const body = document.querySelector(`#${CSS.escape(b.getAttribute("aria-controls"))}`);
+        out.push({ id: b.getAttribute("aria-controls"), open: body && !body.hidden,
+                   len: body ? body.textContent.trim().length : 0 });
+      }
+      return out;
+    });
+    ok("every wire row opens", opened.every((o) => o.open), JSON.stringify(opened.filter((o) => !o.open)));
+    ok("...and none opens to an empty panel",
+      opened.every((o) => o.len > 40), JSON.stringify(opened.filter((o) => o.len <= 40)));
+    ok("EMPHASIS STAYS SCARCE: at most one action card on any page",
+      (await page.evaluate(() => document.querySelectorAll("[data-content] .card.act").length)) <= 1,
+      "more than one card is claiming to be the answer");
+    ok("every disclosure id is unique",
+      new Set(opened.map((o) => o.id)).size === opened.length,
+      JSON.stringify(opened.map((o) => o.id)));
+
+    await page.screenshot({ path: path.join(SHOTS, "v2-wire-desktop.png"), fullPage: true });
+    await browser.close(); server.close();
+  }
+  {
+    const { page, browser, server } = await open({ width: 390, height: 844, hash: "#/joop/wire" });
+    await page.evaluate(() => document.querySelector(".disc .dischd")?.click());
+    const m = await page.evaluate(() => ({
+      overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+      tap: Math.round(document.querySelector(".dischd").getBoundingClientRect().height),
+    }));
+    ok("phone: no horizontal scroll on the wire", m.overflow <= 0, `${m.overflow}px`);
+    ok("phone: wire rows are thumb-sized", m.tap >= 40, `${m.tap}px`);
+    await page.screenshot({ path: path.join(SHOTS, "v2-wire-phone.png"), fullPage: true });
+    await browser.close(); server.close();
+  }
+  // A league with nothing on the wire must say so, not render a blank card.
+  {
+    const { page, browser, server } = await open({ width: 900, height: 700, hash: "#/joop/wire", vacancyOk: false });
+    const t2 = await page.evaluate(() => document.querySelector("[data-content]").textContent);
+    ok("a vacancy outage removes the block rather than breaking the page",
+      !/Just came free/.test(t2) && t2.length > 40);
+    await browser.close(); server.close();
+  }
+
   console.log(`\nv2 render: ${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });

@@ -13,6 +13,7 @@ import assert from "node:assert";
 import { defRow, wireTally as wireTallyOriginal } from "../js/ui.js";
 import { defVerdict } from "../v2/logic/defence.js";
 import { wireTally } from "../v2/logic/wire.js";
+import { defenceRow } from "../v2/wire-page.js";
 
 let pass = 0, fail = 0;
 const t = (name, fn) => { try { fn(); pass++; } catch (e) { fail++; console.error(`FAIL  ${name}\n      ${e.message}`); } };
@@ -94,6 +95,48 @@ for (const w of [
     assert.strictEqual(wireTally(w), wireTallyOriginal(w));
   });
 }
+
+// ---------------------------------------------------------------------------
+// THE DEFENCE ROW'S COPY, branch by branch, against the original.
+//
+// The ladder's ORDER is already proven above. This proves the SENTENCES: ten
+// branches of hand-written copy were retyped into v2/wire-page.js, and copy is
+// what this project's render layer has actually caught - a missing article, a
+// verdict a number does not support, "undefined" in every sentence under a
+// passing presence assertion. Each branch must still say the thing that makes
+// it that branch, and must not say any other branch's thing.
+// ---------------------------------------------------------------------------
+for (const [kind, patch] of Object.entries(CASES)) {
+  t(`defence COPY agrees with ui.js on "${kind}"`, () => {
+    const d = { ...base(), ...patch };
+    const mine = defenceRow(d);
+    assert.ok(mine.includes(SIGNATURE[kind]),
+      `v2 did not produce the "${kind}" sentence.\n      got: ${mine.replace(/<[^>]+>/g, " ").slice(0, 200)}`);
+    for (const [other, phrase] of Object.entries(SIGNATURE)) {
+      if (other === kind) continue;
+      assert.ok(!mine.includes(phrase),
+        `the "${kind}" row also contains the "${other}" signature`);
+    }
+  });
+}
+
+t("the two refusals survive the port, word for word", () => {
+  // Both are claims about what this tool will not do, and both were written
+  // deliberately. A paraphrase is a different promise.
+  const actionable = defenceRow({ ...base(), actionable: true, counts: true });
+  assert.ok(actionable.includes("This is a projection gap, not a\n             matchup read.")
+    || actionable.replace(/\s+/g, " ").includes("This is a projection gap, not a matchup read."),
+    "the projection-gap refusal is missing or reworded");
+});
+
+t("a defence row never renders undefined, on any branch", () => {
+  for (const patch of Object.values(CASES)) {
+    const out = defenceRow({ ...base(), ...patch });
+    assert.ok(!/\bundefined\b|\bNaN\b|\[object Object\]/.test(out),
+      `leaked a placeholder: ${out.replace(/<[^>]+>/g, " ").slice(0, 160)}`);
+  }
+  assert.strictEqual(defenceRow(null), "");
+});
 
 console.log(`v2 differential: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

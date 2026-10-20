@@ -76,14 +76,35 @@ const n = (v) => (typeof v === "number" ? v : null);
 // Items, per league
 // ---------------------------------------------------------------------------
 
-/** The soonest kickoff among the players a call depends on, ignoring anyone
- *  already locked - a locked player's deadline has passed and the engine has
- *  already solved around him. Null when nothing in the call has a known time. */
-export function callDeadline(pair) {
-  const times = [pair.in, pair.out]
+/** The soonest kickoff among the players a decision depends on, ignoring
+ *  anyone already locked - a locked player's deadline has passed and the
+ *  engine has already solved around him. Null when nothing has a known time. */
+export function soonestKickoff(players) {
+  const times = (players || [])
     .filter((p) => p && !p.locked && typeof p.game?.kickoffUTC === "number")
     .map((p) => p.game.kickoffUTC);
   return times.length ? Math.min(...times) : null;
+}
+
+export const callDeadline = (pair) => soonestKickoff([pair.in, pair.out]);
+
+/** EVERY decision has a deadline, not just lineup calls.
+ *
+ *  Phase 2 promoted lineup corrections only, and narrowed the class copy to
+ *  match rather than widen the rule. Chris took the widening: a defence stream
+ *  or an empty-seat claim whose game kicks off in forty minutes stops being
+ *  possible on exactly the same deadline, for exactly the same reason - the
+ *  man you would be starting has played.
+ *
+ *  A claim is still subject to waiver processing, which is a different and
+ *  slower clock. This measures the one that ends the decision outright. */
+export function itemDeadline(it) {
+  switch (it.kind) {
+    case "call":  return it.deadline ?? null;
+    case "claim": return soonestKickoff([it.player, it.over]);
+    case "def":   return soonestKickoff([it.verdict?.best]);
+    default:      return null;
+  }
 }
 
 function lineupItems(L) {
@@ -223,18 +244,25 @@ export function todayModel(state, { now = Date.now(), day = new Date().getDay() 
       });
     };
 
-    // A correction is promoted out of "lineup" and into "locking soon" when
+    // An item is promoted out of its own class and into "locking soon" when
     // the game it depends on starts inside the window. It is the SAME item -
-    // promotion by deadline, not a second source - so nothing is listed twice.
-    const calls = lineupItems(L);
-    const soon = [], later = [];
-    for (const c of calls) {
-      const urgent = c.deadline !== null && c.deadline - now <= LOCK_SOON_MS && c.deadline > now;
-      (urgent ? soon : later).push(c);
-    }
-    push("locking", soon);
-    push("lineup", later);
-    push("claims", claimItems(L));
+    // promotion by deadline, not a second source - so nothing is listed twice,
+    // and it keeps its kind, so it still renders and links correctly.
+    const urgent = (it) => {
+      const d = itemDeadline(it);
+      return d !== null && d > now && d - now <= LOCK_SOON_MS;
+    };
+    const split = (items) => {
+      const soon = [], later = [];
+      for (const it of items) (urgent(it) ? soon : later).push(it);
+      return [soon, later];
+    };
+
+    const [callsSoon, callsLater] = split(lineupItems(L));
+    const [claimsSoon, claimsLater] = split(claimItems(L));
+    push("locking", [...callsSoon, ...claimsSoon]);
+    push("lineup", callsLater);
+    push("claims", claimsLater);
     const watch = watchItems(L, { exclude: actionableIds(L) });
     push("watch", watch, watch.droppedSignals || 0);
   }
@@ -246,11 +274,7 @@ export function todayModel(state, { now = Date.now(), day = new Date().getDay() 
 
   const claimsLabel = lead ? "Claims process today" : "On the wire";
   const META = {
-    // Narrowed deliberately: promotion into this class only ever moves LINEUP
-    // corrections, so the copy must not promise a property it does not apply
-    // to claims. Extending promotion to claims is a real option and is in the
-    // handoff, not silently assumed here.
-    locking: ["Locking soon", "Lineup changes that stop being possible when the game starts."],
+    locking: ["Locking soon", "These stop being possible when the game starts \u2014 whoever you would be moving has played."],
     lineup: ["Lineup corrections", "Worth points, and no deadline before Sunday."],
     // The second sentence is the page's own design, stated on every day rather
     // than only on claims days - five days a week it was dropping the line

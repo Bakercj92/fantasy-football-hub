@@ -333,5 +333,49 @@ t("the cap is pinned to a value, not to itself", () => {
   assert.strictEqual(WATCH_PER_LEAGUE, 4);
 });
 
+t("A CLAIM HAS A DEADLINE TOO, and it promotes on the same window", () => {
+  const guy = { id: "w", name: "W", pos: "RB", gap: 6, slot: "RB",
+                game: { kickoffUTC: soon } };
+  const L = league("joop", "Joop", {
+    waivers: { any: true, upgrades: [guy], risers: [], def: null } });
+  const m = todayModel(stateOf(L), { now: NOW, day: 0 });
+  assert.strictEqual(cls(m, "locking").count, 1);
+  assert.strictEqual(cls(m, "claims"), undefined, "promoted, not copied");
+  assert.strictEqual(cls(m, "locking").leagues[0].items[0].kind, "claim",
+    "it keeps its kind, so it still links to the wire");
+});
+
+t("a defence stream promotes on the free defence's kickoff", () => {
+  const def = { slot: "DEF", current: { name: "LV", pts: 4 },
+                best: { name: "KC", pts: 9, game: { kickoffUTC: soon } },
+                gap: 5, actionable: true, counts: true };
+  const L = league("joop", "Joop", { waivers: { any: true, upgrades: [], risers: [], def } });
+  const m = todayModel(stateOf(L), { now: NOW, day: 0 });
+  assert.strictEqual(cls(m, "locking").count, 1);
+  assert.strictEqual(cls(m, "locking").leagues[0].items[0].kind, "def");
+});
+
+t("a claim whose man has already kicked off is not 'soon'", () => {
+  const guy = { id: "w", name: "W", pos: "RB", gap: 6, slot: "RB",
+                locked: true, game: { kickoffUTC: soon } };
+  const L = league("joop", "Joop", {
+    waivers: { any: true, upgrades: [guy], risers: [], def: null } });
+  const m = todayModel(stateOf(L), { now: NOW, day: 0 });
+  assert.strictEqual(cls(m, "locking"), undefined);
+  assert.strictEqual(cls(m, "claims").count, 1);
+});
+
+t("urgent calls and urgent claims share the class without merging", () => {
+  const L = league("joop", "Joop", {
+    calls: { actionable: true, entering: [P("in", { game: { kickoffUTC: soon } })],
+             leaving: [P("out", { pts: 2 })], forced: [], gain: 8 },
+    waivers: { any: true, upgrades: [{ id: "w", name: "W", pos: "RB", gap: 6, slot: "RB",
+                                       game: { kickoffUTC: soon } }], risers: [], def: null },
+  });
+  const g = cls(todayModel(stateOf(L), { now: NOW, day: 0 }), "locking").leagues[0];
+  assert.deepStrictEqual(g.items.map((i) => i.kind).sort(), ["call", "claim"]);
+  assert.deepStrictEqual(g.kinds.sort(), ["call", "claim"]);
+});
+
 console.log(`v2 today: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
