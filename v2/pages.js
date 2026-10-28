@@ -9,6 +9,9 @@ import { esc } from "./shell.js";
 import { todayModel } from "./logic/today.js";
 import { lineupPage } from "./lineup-page.js";
 import { wirePage } from "./wire-page.js";
+import { comparePage } from "./compare-page.js";
+import { recapPage } from "./recap-page.js";
+import { methodsPage } from "./methods-page.js";
 import { href } from "./router.js";
 import { n1, sgn } from "./copy.js";
 
@@ -190,9 +193,9 @@ export function renderPage(route, state) {
     case "lineup":  return lineupPage(L, state);
     case "today":   return todayPage(state);
     case "wire":    return wirePage(L, state);
-    case "compare": return stub("Any two players, measured the same way.", 4);
-    case "recap":   return stub("Last week, graded at this league's own rules.", 4);
-    case "methods": return stub("Where every number on this site comes from.", 4);
+    case "compare": return comparePage(L, state);
+    case "recap":   return recapPage(L, state);
+    case "methods": return methodsPage(L, state);
     default:        return stub("Not a page.");
   }
 }

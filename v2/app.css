@@ -379,16 +379,158 @@ a:focus-visible,button:focus-visible,summary:focus-visible,details:focus-visible
 .prow.empty{cursor:default}
 .prow.empty:hover{background:none}
 .pdet > td{padding:0 var(--sp4) var(--sp4);background:var(--c-sunken)}
-.pdet .kv{display:grid;grid-template-columns:auto 1fr;gap:var(--sp1) var(--sp4);
+.pdet .kv,.meth .kv{display:grid;grid-template-columns:auto 1fr;gap:var(--sp1) var(--sp4);
   margin:var(--sp3) 0 0;font-size:var(--s2)}
-.pdet dt{color:var(--c-dim)}
-.pdet dd{margin:0;color:var(--c-text)}
+.pdet dt,.meth dt{color:var(--c-dim)}
+.pdet dd,.meth dd{margin:0;color:var(--c-text)}
 .pdet .mkt,.pdet .veg{margin-top:var(--sp3)}
 @media(min-width:620px){
-  .pdet .kv{grid-template-columns:auto 1fr auto 1fr;max-width:72ch}
+  .pdet .kv,.meth .kv{grid-template-columns:auto 1fr auto 1fr;max-width:72ch}
 }
 
 .subhd{margin:var(--sp5) 0 0;font-size:var(--s1);letter-spacing:.07em;
   text-transform:uppercase;color:var(--c-dim);font-weight:600}
 /* A row that was checked and is fine reads quieter than one with work in it. */
 .disc.calm .dl b{color:var(--c-mute);font-weight:600}
+
+/* ===========================================================================
+   PHASE 4 — Compare, and the chip that keeps a selection findable.
+
+   NOT TOUCHED HERE, DELIBERATELY: `.chip`. Phase 3 emits class="chip out|dbt|q"
+   from lineup-page.js, wire-page.js and copy.js and this stylesheet has never
+   carried a rule for it, so injury markers render as bare text today. Giving
+   them a padded badge is the right fix and it is NOT a phase 4 change: it adds
+   width inside the player-name cell on two pages that are already live and
+   already measured, and app.css:176 plus constraint 5 of the rebuild record a
+   name column collapsing to 59px with that class of change. It needs its own
+   pass and its own measurement.
+   =========================================================================== */
+
+/* --- the selection chip, in the inert chrome ----------------------------- */
+/* THE TOPBAR WRAPS, AND ONLY EVER BECAUSE OF THIS CHIP.
+   Measured at 320px: brand 161 + week stamp 83 + chip 58 + gaps and padding =
+   358 in a 320px viewport, and the DOCUMENT scrolled sideways by 35px - the
+   failure class app.css:176 and constraint 5 of the rebuild both exist for.
+   Letting the bar wrap drops the chip to its own line rather than pushing the
+   page, and it can only do that while something is picked, which is a state
+   that did not exist before phase 4. The brand and the stamp are untouched. */
+.topbar{flex-wrap:wrap}
+.selbar{display:flex;align-items:center;gap:var(--sp1);margin-left:var(--sp3)}
+@media(max-width:560px){
+  .selbar{width:100%;margin-left:0;justify-content:flex-end}
+}
+.selchip{display:inline-flex;align-items:center;gap:var(--sp1);
+  padding:var(--sp1) var(--sp2);border-radius:var(--r-pill);
+  background:var(--c-act-fill);color:var(--c-act);
+  font-size:var(--s2);font-weight:650;white-space:nowrap;text-decoration:none;
+  border:1px solid transparent}
+.selchip:hover,.selchip:focus-visible{border-color:var(--c-act)}
+.selchip .ico{font-size:var(--s3);line-height:1}
+.selclr{flex:none;width:22px;height:22px;padding:0;border:0;border-radius:var(--r-pill);
+  background:transparent;color:var(--c-dim);font-size:var(--s4);line-height:1;cursor:pointer}
+.selclr:hover,.selclr:focus-visible{background:var(--c-raised);color:var(--c-text)}
+/* The week stamp already takes the right-hand end, so on a narrow phone the
+   chip is the thing that gives: it keeps its tap target and drops its words. */
+@media(max-width:460px){
+  .selchip{font-size:0;gap:0;padding:var(--sp1) var(--sp2)}
+  .selchip .ico{font-size:var(--s4)}
+}
+
+/* --- the control in a roster row ---------------------------------------- */
+/* A 28px target inside a table cell. Below that it stops being tappable, and
+   this sits next to a name that is already competing for the cell. */
+.cmpbtn{flex:none;margin-left:var(--sp1);width:28px;height:28px;padding:0;
+  border:1px solid transparent;border-radius:var(--r-sm);
+  background:transparent;color:var(--c-dim);font-size:var(--s3);line-height:1;cursor:pointer;
+  vertical-align:middle}
+.cmpbtn:hover,.cmpbtn:focus-visible{color:var(--c-text);background:var(--c-raised)}
+.cmpbtn.on{background:var(--c-act-fill);color:var(--c-act);border-color:var(--c-act)}
+
+/* --- the comparison itself ---------------------------------------------- */
+.cmp > h2 .clr,.cmp.one > h2 .clr{margin-left:auto}
+.clr{border:0;background:transparent;color:var(--c-dim);font-size:var(--s2);
+  cursor:pointer;padding:var(--sp1) var(--sp2);border-radius:var(--r-sm)}
+.clr:hover,.clr:focus-visible{background:var(--c-raised);color:var(--c-text)}
+/* SCOPED TO COMPARE. An earlier cut of this wrote `.card > h2`, which has the
+   same specificity as the rule at the top of this file and therefore silently
+   flipped align-items from baseline to center on every card heading on Lineup,
+   Wire and Today - three pages already shipped and already measured. Exactly
+   the regression class that justified leaving `.chip` alone, committed two
+   pages wider and undeclared. Caught in audit. */
+.cmp > h2,.cmp.one > h2{display:flex;align-items:center;gap:var(--sp2)}
+
+.verdict{font-size:var(--s4);font-weight:650;line-height:var(--lh-tight);
+  margin:0 0 var(--sp2)}
+.verdict.yes{color:var(--c-act)}
+.verdict.tie{color:var(--c-mute)}
+
+/* HORIZONTAL SCROLL IS THE ONLY HONEST ANSWER HERE, and only here.
+   Every other table on this site folds columns away at width (.fold-sm/md/lg)
+   because its columns are a fixed, known set. This one's columns ARE the
+   players, so there is no column to drop that is not one of the things being
+   compared. Folding would silently remove a player from a comparison. */
+.scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;margin:var(--sp3) 0 0}
+.cmpt{table-layout:auto;min-width:100%}
+.cmpt .ml{color:var(--c-mute);font-size:var(--s2);white-space:nowrap}
+.cmpt .ml .rowtog{border:0;background:transparent;padding:0;cursor:pointer;
+  color:inherit;font:inherit;text-align:left;text-decoration:underline dotted;
+  text-underline-offset:3px}
+.cmpt .ml .rowtog:hover,.cmpt .ml .rowtog:focus-visible{color:var(--c-text)}
+.cmpt .cp{vertical-align:bottom}
+.cmpt .cn{display:block;font-weight:650;line-height:var(--lh-tight)}
+.cmpt .cv{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.cmpt .cv.win{color:var(--c-act);font-weight:650}
+.cmpt .th td{border-bottom-color:var(--c-line)}
+.mrow.open .ml .rowtog{color:var(--c-text)}
+.mnote td{padding-top:0;border-bottom:1px solid var(--c-line-soft);
+  color:var(--c-mute);font-size:var(--s2);line-height:var(--lh-loose)}
+
+/* --- the empty state ----------------------------------------------------- */
+.offer{margin-top:var(--sp4);padding-top:var(--sp4);border-top:1px solid var(--c-line-soft)}
+.go{margin-top:var(--sp3);padding:var(--sp2) var(--sp4);cursor:pointer;
+  border:1px solid var(--c-act);border-radius:var(--r-sm);
+  background:var(--c-act-fill);color:var(--c-act);
+  font-size:var(--s3);font-weight:650}
+.go:hover,.go:focus-visible{background:var(--c-act);color:var(--c-bg)}
+.cmp-empty{text-align:left}
+
+/* --- the per-load notes under a comparison ------------------------------- */
+.frow{margin-top:var(--sp3);font-size:var(--s2);color:var(--c-mute);
+  line-height:var(--lh-loose)}
+.frow.warn{color:var(--c-warn)}
+.frow.pending{color:var(--c-dim)}
+.note.sub{margin-top:var(--sp3);color:var(--c-dim);font-size:var(--s1)}
+
+/* ===========================================================================
+   PHASE 4 — Recap and Methods
+   =========================================================================== */
+
+/* --- the table of contents on Methods ------------------------------------ */
+.toc ul{margin:0;padding:0 0 0 var(--sp4);columns:2;column-gap:var(--sp5)}
+.toc li{margin:0 0 var(--sp1);font-size:var(--s2)}
+.toc a{color:var(--c-mute)}
+.toc a:hover,.toc a:focus-visible{color:var(--c-act)}
+@media(max-width:560px){ .toc ul{columns:1} }
+
+/* --- a Methods section --------------------------------------------------- */
+/* scroll-margin so an anchor jump does not land the heading under the sticky
+   topbar, which is the one thing an anchored page must not do */
+.meth{scroll-margin-top:calc(var(--sp6) + 44px)}
+.meth > h2{margin-bottom:var(--sp3)}
+.meth .note + .note{margin-top:var(--sp3)}
+.meth .lvl{margin:var(--sp3) 0 0;padding:0;list-style:none;
+  display:flex;flex-wrap:wrap;gap:var(--sp2) var(--sp4);
+  font-size:var(--s2);color:var(--c-mute);font-variant-numeric:tabular-nums}
+.meth .lvl b{color:var(--c-text);font-weight:650}
+.meth .gaps{margin:0;padding-left:var(--sp4)}
+.meth .gaps li + li{margin-top:var(--sp2)}
+
+/* --- Recap --------------------------------------------------------------- */
+/* Tabular figures so a column of deltas lines up. `.recap` was in this
+   selector and matched nothing - recapPage emits class="card" - and the
+   comment claimed the rule styled the em-dash case, which tabular-nums cannot
+   do. Both corrected rather than left as decoration. */
+.card .disc .tag{font-variant-numeric:tabular-nums}
+/* A lockout that could not be measured carries an em dash, and it should read
+   quieter than a number. THIS is the rule that does that. */
+.card .disc .tag.unmeasured{color:var(--c-dim);font-weight:500}

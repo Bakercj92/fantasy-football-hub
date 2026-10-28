@@ -14,7 +14,15 @@ t("empty hash lands on Today", () => {
 
 t("global routes carry no league", () => {
   assert.deepStrictEqual(parse("#/today", KEYS), { page: "today", league: null });
-  assert.deepStrictEqual(parse("#/methods", KEYS), { page: "methods", league: null });
+  // Today is the only global route since phase 4 moved Methods under a league
+  // (two of its sections are measurements of one league's roster, not prose).
+  // Asserted through ROUTES rather than a second hardcoded page name, so this
+  // keeps meaning something if the scopes move again.
+  const globals = Object.entries(ROUTES).filter(([, r]) => r.scope === "global").map(([k]) => k);
+  assert.deepStrictEqual(globals, ["today"]);
+  for (const k of globals) {
+    assert.deepStrictEqual(parse(`#/${k}`, KEYS), { page: k, league: null });
+  }
 });
 
 t("league-scoped routes round-trip", () => {
@@ -38,7 +46,15 @@ t("an unknown page is rejected", () => {
 });
 
 t("a global page cannot be league-scoped", () => {
-  assert.strictEqual(parse("#/joop/methods", KEYS), null);
+  // Was asserted through #/joop/methods until phase 4 made Methods
+  // league-scoped. Today is the global route now, and the property under test
+  // is unchanged: a league in front of a global page is not a URL.
+  assert.strictEqual(parse("#/joop/today", KEYS), null);
+});
+
+t("methods is league-scoped, and its URL carries one", () => {
+  assert.deepStrictEqual(parse("#/joop/methods", KEYS), { page: "methods", league: "joop" });
+  assert.strictEqual(href("methods", "joop"), "#/joop/methods");
 });
 
 t("a league-scoped page with no league resolves to the active one, not a 404", () => {

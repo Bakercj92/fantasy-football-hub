@@ -2,9 +2,10 @@
 //
 // ui.js:555: `const took = row.delta <= 0`. The whole verdict copy hangs on
 // it, and a zero delta counts as the lineup having held up - the two lineups
-// agreed, so there was nothing to take. Get the comparison backwards, or make
-// it strict, and the page confidently tells Chris he was wrong in exactly the
-// weeks he was right.
+// SCORED the same, which is not the same claim as their having been the same
+// lineup, and either way there was nothing to be gained by switching. Get the
+// comparison backwards, or make it strict, and the page confidently tells
+// Chris he was wrong in exactly the weeks he was right.
 
 import { RECAP_MAX, LOCKOUT_NAMES } from "./caps.js";
 

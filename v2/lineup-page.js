@@ -226,7 +226,27 @@ function detailPanel(p) {
     `<dt>${k}</dt><dd>${v}</dd>`).join("")}</dl>${usagePhrase(p)}${veg}${market}`;
 }
 
-function playerRows(p, slot, idPrefix) {
+/** THE COMPARE CONTROL.
+ *
+ * IN THE NAME CELL, NOT A COLUMN OF ITS OWN. COLS/NCOLS above is derived
+ * precisely because a hand-written colspan went stale when a column was added
+ * (ui.js:738-743, and again in the v2 port), and a seventh column would also
+ * spend width the player-name column cannot spare - app.css records a name
+ * column collapsing to 59px, and keeping table-layout:auto below 560px is
+ * constraint 5 of the rebuild. So this rides inside the cell that already
+ * exists, which is also where the original pointed the reader: "tap the
+ * balance next to any player in your lineup or on your bench" (ui.js:616).
+ *
+ * aria-pressed rather than a checkbox: it is a toggle on a thing, and the
+ * pressed state is what the header count is counting. */
+function cmpBtn(p, picked) {
+  return ` <button class="cmpbtn${picked ? " on" : ""}" type="button" data-cmp="${esc(p.id)}"
+    aria-pressed="${picked ? "true" : "false"}" title="${
+    picked ? "Picked for Compare — tap again to remove" : "Add to Compare"}"
+    >&#9878;</button>`;
+}
+
+function playerRows(p, slot, idPrefix, sel = null) {
   if (!p) {
     return `<tr class="prow empty"><td class="slot">${esc(slot)}</td>
       <td colspan="${NCOLS - 1}" class="note">— empty —</td></tr>`;
@@ -248,7 +268,7 @@ function playerRows(p, slot, idPrefix) {
     <td class="nm"><button class="rowtog" aria-expanded="false" aria-controls="${id}">${
       esc(p.name)}</button><span class="pos">${esc(p.pos)}</span>${
       f ? ` <span class="chip ${esc(SEV_CLS[f.severity] || "q")}" title="${esc(flagTitle(f))}">${
-        esc(chipLabel(f))}</span>` : ""}${nameMark(p)}</td>
+        esc(chipLabel(f))}</span>` : ""}${nameMark(p)}${cmpBtn(p, !!sel?.has(String(p.id)))}</td>
     <td class="fold-md">${esc(p.team || "")}</td>
     <td class="opp fold-sm">${p.opponent ? esc(p.opponent) : '<span class="bye">bye</span>'}${
       p.locked ? ` <span class="lock" title="Kicked off ${esc(kick(p.game?.kickoffUTC))} — Sleeper will not move him now">&#128274;</span>`
@@ -260,25 +280,28 @@ function playerRows(p, slot, idPrefix) {
   <tr class="pdet" id="${id}" hidden><td colspan="${NCOLS}">${detailPanel(p)}</td></tr>`;
 }
 
-function rosterTables(L) {
+function rosterTables(L, sel = null) {
   const pairs = lineupPairs(L.slots, L.starters, L.byId);
   const bench = benchOf(L.roster, L.starters);
   return `
     <section class="card flush">
       <h2>Starting</h2>
       <table>${HEAD}<tbody>${
-        pairs.map(([s, p]) => playerRows(p, s, "st")).join("")}</tbody></table>
+        pairs.map(([s, p]) => playerRows(p, s, "st", sel)).join("")}</tbody></table>
     </section>
     ${bench.length ? `<section class="card flush">
       <h2>Bench <span class="ct">${bench.length}</span></h2>
       <table>${HEAD}<tbody>${
-        bench.map((p) => playerRows(p, "BN", "bn")).join("")}</tbody></table>
+        bench.map((p) => playerRows(p, "BN", "bn", sel)).join("")}</tbody></table>
     </section>` : ""}`;
 }
 
 export function lineupPage(L, state) {
   if (!L) return `<section class="card quiet"><div class="stub">No league selected.</div></section>`;
-  return callsCard(L) + signalsCard(L) + lockedCard(L) + rosterTables(L);
+  // Keyed on this route's league rather than state.active, for the reason
+  // compare-page.js records at the same lookup.
+  const sel = state?.selection?.[L.entry?.key] || null;
+  return callsCard(L) + signalsCard(L) + lockedCard(L) + rosterTables(L, sel);
 }
 
 export { NCOLS, COLS, playerRows, detailPanel, callsCard, signalsCard, lockedCard };

@@ -99,5 +99,65 @@ t("unpriced players surface, and zero does not", () => {
   assert.ok(!statusModel(healthy(), { unpriced: 0 }).rows.some((r) => r.key === "unpriced"));
 });
 
+// ===========================================================================
+// THE SNAP-COUNTS ROW.
+//
+// snap_counts is its own nflverse release with its own publishing schedule, so
+// a fresh overall stamp can sit over a mirror whose snap half never arrived.
+// This row is the ONLY place on the site that distinguishes a missing column
+// from a measured zero, and it went missing entirely in the phase 1 footer
+// split before a phase 4 audit found it. Restored - and then shipped with no
+// assertions, which let three mutations through including inverting the claim
+// to "Those players took zero snaps", the exact opposite of what it exists to
+// say. Pinned here.
+// ===========================================================================
+const snapsOut = () => ({
+  ...healthy(),
+  usage: { ok: true, throughWeek: 8, generatedAt: "2026-10-27T00:00:00Z",
+    sources: { stats_player: { ok: true }, snap_counts: { ok: false } } },
+});
+
+t("A MIRROR WHOSE SNAP HALF NEVER PUBLISHED SAYS SO", () => {
+  const m = statusModel(snapsOut());
+  const row = m.rows.find((r) => r.key === "snaps");
+  assert.ok(row, "the snap-counts outage produced no row at all");
+  assert.strictEqual(row.level, "warn");
+});
+
+t("...AND SAYS IT IS MISSING DATA, NOT ZERO SNAPS", () => {
+  const row = statusModel(snapsOut()).rows.find((r) => r.key === "snaps");
+  assert.match(row.text, /missing data, not zero snaps/i,
+    "this sentence is the whole reason the row exists");
+  assert.ok(!/took zero snaps|are zero/i.test(row.text),
+    "inverted to the opposite claim");
+});
+
+t("...and the summary names it rather than blaming the mirror generally", () => {
+  const m = statusModel(snapsOut());
+  assert.match(m.summary, /snap counts/i, m.summary);
+});
+
+t("a mirror with both halves published raises no snap row", () => {
+  const ok = statusModel({ ...healthy(),
+    usage: { ok: true, throughWeek: 8, generatedAt: "2026-10-27T00:00:00Z",
+      sources: { stats_player: { ok: true }, snap_counts: { ok: true, rows: 9981 } } } });
+  assert.ok(!ok.rows.some((r) => r.key === "snaps"));
+  assert.strictEqual(ok.level, "ok");
+});
+
+t("an older mirror with no per-source block is not reported as a snap outage", () => {
+  // `sources` is absent on a mirror built before the field existed. Absent is
+  // not the same claim as published-and-failed.
+  const m = statusModel(healthy());
+  assert.ok(!m.rows.some((r) => r.key === "snaps"));
+});
+
+t("a snap outage cannot fire alongside 'no usage layer at all'", () => {
+  const m = statusModel({ ...healthy(), usage: { ok: false } });
+  assert.ok(m.rows.some((r) => r.key === "usage"));
+  assert.ok(!m.rows.some((r) => r.key === "snaps"),
+    "a mirror that did not load has no half to report on");
+});
+
 console.log(`v2 status: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

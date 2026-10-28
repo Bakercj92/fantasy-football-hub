@@ -49,6 +49,7 @@ export function mount({ leagues, week, season, gradedWeek, day }) {
         <div class="brand">Fantasy Football Hub</div>
         <div class="wk">Week ${esc(week)} · ${esc(season)}${
           gradedWeek ? ` · wk ${esc(gradedWeek)} graded` : ""}</div>
+        <div data-sel class="selbar" hidden></div>
       </header>
       <div class="body">
         <nav class="rail" aria-label="Sections">
@@ -75,6 +76,7 @@ export function mount({ leagues, week, season, gradedWeek, day }) {
     leagues: document.querySelector("[data-leagues]"),
     title: document.querySelector("[data-title]"),
     sub: document.querySelector("[data-sub]"),
+    sel: document.querySelector("[data-sel]"),
     navs: [...document.querySelectorAll("[data-nav]")],
     lgs: [...document.querySelectorAll("[data-league]")],
   };
@@ -93,16 +95,58 @@ export function mount({ leagues, week, season, gradedWeek, day }) {
  *  OPEN STATE IS CARRIED ACROSS A REPAINT the same way the folds are: a panel
  *  the reader opened at 12:58 must still be open at 13:00 when a kickoff
  *  re-solves the page under him. */
-export function wire() {
+export function wire(handlers = {}) {
+  // ORDER MATTERS HERE, AND IT IS NOT COSMETIC.
+  //
+  // The compare control sits INSIDE .prow (lineup-page.js puts it in the name
+  // cell), and the disclosure branch below treats a click anywhere in a row as
+  // a request to open that row's detail panel. Tested the other way round
+  // first: every tap of the balance opened the panel and never reached the
+  // selection. So the selection controls claim the event before the row does.
+  const pick = (ev, selector) => ev.target.closest(selector);
+
   el.content.addEventListener("click", (ev) => {
+    const one = pick(ev, "[data-cmp]");
+    if (one) {
+      ev.preventDefault();
+      handlers.onToggle?.(String(one.dataset.cmp));
+      return;
+    }
+    // The empty state's one-tap offer. Two ids, so two toggles - pipeline's
+    // onToggle repaints after each, which is wasteful and harmless, and
+    // reusing it means the offer cannot drift from what the balance does.
+    const pair = pick(ev, "[data-cmp-pair]");
+    if (pair) {
+      ev.preventDefault();
+      for (const id of String(pair.dataset.cmpPair).split(",").filter(Boolean)) {
+        handlers.onToggle?.(id);
+      }
+      return;
+    }
+    if (pick(ev, "[data-clear]")) {
+      ev.preventDefault();
+      handlers.onClear?.();
+      return;
+    }
+
     // A link inside a row is a link, not a toggle.
     if (ev.target.closest("a")) return;
     const btn = ev.target.closest(".rowtog, .dischd");
-    const row = ev.target.closest(".prow");
+    const row = ev.target.closest(".prow, .mrow");
     const t = btn || (row && row.querySelector(".rowtog"));
     if (!t) return;
     ev.preventDefault();
     toggleDisclosure(t);
+  });
+
+  // THE CHIP LIVES IN THE INERT CHROME, so its clear button is outside
+  // [data-content] and the listener above can never see it. Delegated on the
+  // container rather than the button, because setSelection() replaces the
+  // button's markup every time the count changes.
+  el.sel.addEventListener("click", (ev) => {
+    if (!ev.target.closest("[data-clear]")) return;
+    ev.preventDefault();
+    handlers.onClear?.();
   });
 }
 
@@ -113,7 +157,7 @@ function toggleDisclosure(btn) {
   const open = btn.getAttribute("aria-expanded") === "true";
   btn.setAttribute("aria-expanded", String(!open));
   panel.hidden = open;
-  const row = btn.closest(".prow");
+  const row = btn.closest(".prow, .mrow");
   if (row) row.classList.toggle("open", !open);
 }
 
@@ -182,6 +226,39 @@ export function setContent(html, scope = null) {
     const btn = el.content.querySelector(`[aria-controls="${CSS.escape(id)}"]`);
     if (btn) toggleDisclosure(btn);
   }
+}
+
+// THE SELECTION CHIP.
+//
+// On one long scroll a compare selection was always visible, because the panel
+// rendered right under the roster that made it (ui.js:607). With routes it is
+// not: two players picked on Lineup and then a tap to Wire leaves the picks
+// alive in state with nothing on screen saying so. This is the one line of
+// chrome that restores that, and it only exists while something is picked.
+//
+// Signature-guarded like the status strip, for the same reason - paint() runs
+// six-plus times in the first seconds and again every thirty seconds through a
+// Sunday - and rebuilt only when the count actually moves.
+let selSig = null;
+export function setSelection(model) {
+  if (!el?.sel) return;
+  const sig = JSON.stringify(model || null);
+  if (sig === selSig) return;
+  selSig = sig;
+  const count = model?.count || 0;
+  if (!count) {
+    el.sel.hidden = true;
+    el.sel.innerHTML = "";
+    return;
+  }
+  el.sel.hidden = false;
+  // ONE PICK IS NOT A COMPARISON, and the chip says what to do about it rather
+  // than offering a link to a page that can only tell him the same thing.
+  el.sel.innerHTML = `<a class="selchip" href="${esc(model.href || "#/compare")}">
+      <span class="ico" aria-hidden="true">&#9878;</span>${count} picked${
+      count === 1 ? " &mdash; pick one more" : ""}</a>
+    <button class="selclr" type="button" data-clear
+      aria-label="Clear the compare selection">&times;</button>`;
 }
 
 let statusSig = null;

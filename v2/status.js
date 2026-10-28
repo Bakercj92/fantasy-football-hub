@@ -8,7 +8,7 @@
 //   - did any team code fail to join the schedule feed
 //   - how old is the usage mirror, and which clubs has it not ingested
 //   - did the market layer arrive
-//   - are there Vegas lines this week
+//   - did the snap-counts half of the usage mirror publish
 //
 // Burying these on a Methods page would mean reading a start/sit call with no
 // indication that locking is off or that the mirror is a week behind. So this
@@ -88,6 +88,20 @@ export function statusModel(state, L = null) {
     const lag = staleness(state.usageFresh);
     rows.push({ level: lag.warn ? "warn" : "ok", key: "usage",
       text: lag.note ? `${text} ${lag.note}` : text });
+
+    // TWO SOURCES, TWO CLAIMS - restored here after a phase 4 audit found it
+    // had fallen out of the phase 1 footer split altogether (ui.js:884-887).
+    // snap_counts is its own nflverse release with its own publishing
+    // schedule, so a fresh overall stamp can sit over a mirror whose snap
+    // half never arrived. That reads as "up to date with nflverse" about a
+    // file missing a whole column, and snap share then renders blank
+    // everywhere - which is MISSING DATA, not zero snaps. It is the only
+    // place on the site that distinguishes the two, and it is the kind of
+    // thing nobody notices until a Sunday.
+    if (u.sources?.snap_counts && u.sources.snap_counts.ok === false) {
+      rows.push({ level: "warn", key: "snaps",
+        text: `<b>Snap counts did not publish for this build</b>, so snap share is blank everywhere. That is missing data, not zero snaps.` });
+    }
   }
 
   // --- the market layer ---------------------------------------------------
@@ -112,6 +126,7 @@ function summarise(level, rows) {
     if (loud[0].key === "schedule") return "Kickoff locking is off this load";
     if (loud[0].key === "unknown") return "A team code did not join the schedule";
     if (loud[0].key === "usage") return "The usage mirror needs a look";
+    if (loud[0].key === "snaps") return "Snap counts did not publish this build";
     if (loud[0].key === "unpriced") return "Some players have no projection";
     if (loud[0].key === "market") return "Consensus is unavailable this load";
   }

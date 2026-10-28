@@ -5,7 +5,13 @@
 //
 // Two route shapes, deliberately not one:
 //
-//   #/today      #/methods          global - they are not about one league
+//   #/today                         global - it is not about one league
+//
+// METHODS WAS GLOBAL AND IS NOW LEAGUE-SCOPED (phase 4). Two of its sections
+// are measurements rather than prose: replacement level is derived from who is
+// actually free in THAT league right now, and sigma is measured from that
+// league's roster. A global page would have to drop them or lie about which
+// league they describe.
 //   #/joop/wire  #/bku/lineup       league-scoped
 //
 // Forcing a league key into the Today URL would be a lie: Today reads all
@@ -23,7 +29,7 @@ export const ROUTES = {
   wire:    { label: "Wire",    ico: "⇄", scope: "league", sub: "Claims, jobs that just opened, and the standing defence seat." },
   compare: { label: "Compare", ico: "⚖", scope: "league", sub: "Any two players, measured the same way." },
   recap:   { label: "Recap",   ico: "↩", scope: "league", sub: "Last week, graded at this league's own rules." },
-  methods: { label: "Methods", ico: "ⓘ", scope: "global", sub: "Where every number on this site comes from." },
+  methods: { label: "Methods", ico: "ⓘ", scope: "league", sub: "Where every number on this site comes from." },
 };
 
 export const DEFAULT_ROUTE = "today";
@@ -57,7 +63,13 @@ export function parse(hash, leagueKeys = []) {
     // 404 - it is somebody's bookmark from before the league moved. Send it
     // to the same page on the first league, which the caller resolves.
     if (!r) return null;
-    return r.scope === "global" ? { page: parts[0], league: null } : { page: parts[0], league: null };
+    // Both scopes return the same shape here, and that is the point: a
+    // league-scoped page named without a league is NOT an error, it is a
+    // bookmark from before the scope moved - #/methods is exactly that case
+    // since phase 4 - and resolve() fills the league in. Written as a ternary
+    // with two identical branches at first, which read as if the scopes still
+    // diverged.
+    return { page: parts[0], league: null };
   }
 
   if (parts.length === 2) {

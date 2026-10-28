@@ -707,6 +707,328 @@ const ok = (name, cond, detail = "") => {
     await browser.close(); server.close();
   }
 
+  // =========================================================================
+  // PHASE 4 — Compare, Recap, Methods
+  //
+  // The control lives on the LINEUP page and the table lives on Compare, so
+  // most of what is worth checking here is the hop between them. Two of these
+  // guard things node cannot see at all: that tapping the balance does not
+  // also open the row's detail panel (the controls and the row share a
+  // delegated listener, and the row claimed the event first in the version
+  // before this one), and that a comparison table scrolls inside its own box
+  // rather than scrolling the document.
+  // =========================================================================
+  console.log("\nPHASE 4 — THE COMPARE CONTROL");
+  {
+    const { page, browser, server, errors } = await open({ width: 1100, height: 900, hash: "#/joop/lineup" });
+    ok("no page errors", errors.length === 0, errors.join("\n       "));
+
+    const seed = await page.evaluate(() => ({
+      btns: document.querySelectorAll(".prow [data-cmp]").length,
+      rows: document.querySelectorAll(".prow:not(.empty)").length,
+      chip: !!document.querySelector(".selchip"),
+    }));
+    ok("every real roster row carries the control", seed.btns === seed.rows,
+      `${seed.btns} controls for ${seed.rows} rows`);
+    ok("no chip while nothing is picked", seed.chip === false);
+
+    // THE ORDERING BUG. The control sits inside .prow, whose own handler opens
+    // the detail panel on a click anywhere in the row.
+    const one = await page.evaluate(() => {
+      const b = document.querySelector(".prow [data-cmp]");
+      const row = b.closest(".prow");
+      const panelId = row.querySelector(".rowtog").getAttribute("aria-controls");
+      b.click();
+      const fresh = document.querySelector(`[data-cmp="${b.dataset.cmp}"]`);
+      return {
+        pressed: fresh && fresh.getAttribute("aria-pressed"),
+        on: fresh && fresh.classList.contains("on"),
+        panelOpen: !document.getElementById(panelId).hidden,
+        chip: document.querySelector(".selchip")?.textContent.replace(/\s+/g, " ").trim(),
+      };
+    });
+    ok("the control marks itself pressed", one.pressed === "true" && one.on === true,
+      `pressed=${one.pressed} on=${one.on}`);
+    ok("TAPPING IT DOES NOT ALSO OPEN THE ROW", one.panelOpen === false,
+      "the row's disclosure claimed the event before the selection did");
+    ok("the header chip appears, and counts one", /1 picked/.test(one.chip || ""), one.chip);
+    ok("...and says a single pick is not a comparison yet",
+      /pick one more/.test(one.chip || ""), one.chip);
+
+    const two = await page.evaluate(() => {
+      const b = [...document.querySelectorAll(".prow [data-cmp]")][1];
+      b.click();
+      return document.querySelector(".selchip")?.textContent.replace(/\s+/g, " ").trim();
+    });
+    ok("a second pick counts two, and drops the prompt",
+      /2 picked/.test(two || "") && !/pick one more/.test(two || ""), two);
+
+    // The selection lives in state, so a kickoff re-solve must not drop it.
+    const survived = await page.evaluate(() => {
+      window.__ffh_repaint();
+      return {
+        chip: document.querySelector(".selchip")?.textContent.replace(/\s+/g, " ").trim(),
+        pressed: document.querySelectorAll('.prow [data-cmp][aria-pressed="true"]').length,
+      };
+    });
+    ok("A SELECTION SURVIVES A RE-SOLVE", /2 picked/.test(survived.chip || ""), survived.chip);
+    ok("...and the rows still show which two", survived.pressed === 2, `${survived.pressed} pressed`);
+
+    // The chip's clear button lives in the chrome, outside [data-content].
+    const cleared = await page.evaluate(() => {
+      document.querySelector(".selclr").click();
+      return {
+        chip: !!document.querySelector(".selchip"),
+        hidden: document.querySelector("[data-sel]").hidden,
+        pressed: document.querySelectorAll('.prow [data-cmp][aria-pressed="true"]').length,
+      };
+    });
+    ok("THE CHIP'S OWN CLEAR BUTTON WORKS, outside the content region",
+      cleared.chip === false && cleared.hidden === true && cleared.pressed === 0,
+      JSON.stringify(cleared));
+    await browser.close(); server.close();
+  }
+
+  console.log("\nPHASE 4 — THE COMPARISON");
+  {
+    const { page, browser, server, errors } = await open({ width: 1100, height: 900, hash: "#/joop/lineup" });
+    ok("no page errors", errors.length === 0, errors.join("\n       "));
+
+    // Pick two, then follow the chip's own link rather than typing the URL -
+    // that link is the only way most readers will reach this page.
+    // ONE CLICK PER EVALUATE, RE-QUERYING EACH TIME.
+    //
+    // Every toggle repaints [data-content] wholesale (pipeline.js paint()), so
+    // a node captured before the first click is detached by the second and its
+    // click never reaches the delegated listener. Written the other way first,
+    // and it looked exactly like a broken Compare page: the chip counted one,
+    // the route rendered the single-pick panel, and the table was simply
+    // absent. A real reader cannot hit it - the page they tap is the page in
+    // front of them - but a test that batches clicks can.
+    const names = [];
+    for (const i of [0, 1]) {
+      const picked = await page.evaluate(() => {
+        const b = [...document.querySelectorAll('.prow:not(.dead) [data-cmp]:not([aria-pressed="true"])')][0];
+        if (!b) return null;
+        const name = b.closest(".prow").querySelector(".rowtog").textContent.trim();
+        b.click();
+        return name;
+      });
+      if (picked) names.push(picked);
+      await page.waitForTimeout(120);
+    }
+    ok("two different players were picked", names.length === 2 && names[0] !== names[1],
+      JSON.stringify(names));
+    await page.evaluate(() => document.querySelector(".selchip").click());
+    await page.waitForTimeout(300);
+
+    const cmp = await page.evaluate(() => {
+      const c = document.querySelector("[data-content]");
+      const tbl = c.querySelector("table.cmpt");
+      return {
+        title: document.querySelector("[data-title]")?.textContent,
+        hasTable: !!tbl,
+        heads: [...c.querySelectorAll(".cmpt .cp .cn")].map((n) => n.textContent.trim()),
+        mrows: c.querySelectorAll(".cmpt .mrow").length,
+        notesClosed: [...c.querySelectorAll(".cmpt .mnote")].every((n) => n.hidden),
+        verdict: c.querySelector(".verdict")?.textContent.replace(/\s+/g, " ").trim(),
+        clear: !!c.querySelector("[data-clear]"),
+        body: c.textContent.replace(/\s+/g, " "),
+      };
+    });
+    ok("the chip's link lands on Compare", cmp.title === "Compare", `got "${cmp.title}"`);
+    ok("...with a real comparison table", cmp.hasTable === true);
+    ok("...headed by the two players actually picked",
+      names.every((n) => cmp.heads.some((h) => n.includes(h) || h.includes(n))),
+      `picked ${JSON.stringify(names)}, table shows ${JSON.stringify(cmp.heads)}`);
+    ok("...with at least two metric rows", cmp.mrows >= 2, `${cmp.mrows} rows`);
+    ok("metric notes start closed", cmp.notesClosed === true);
+    ok("a verdict is stated", !!cmp.verdict, cmp.verdict);
+    ok("the clear button is on the page", cmp.clear === true);
+    ok("no placeholder leaked into the comparison",
+      !/\bundefined\b|\bNaN\b|\[object Object\]/.test(cmp.body),
+      cmp.body.slice(0, 160));
+
+    const opened = await page.evaluate(() => {
+      const b = document.querySelector(".cmpt .mrow .rowtog");
+      if (!b) return { open: false, text: 0, missing: true };
+      const id = b.getAttribute("aria-controls");
+      b.click();
+      const panel = document.getElementById(id);
+      if (!panel) return { open: false, text: 0, missing: true };
+      return { open: !panel.hidden, text: panel.textContent.replace(/\s+/g, " ").trim().length };
+    });
+    ok("A METRIC ROW OPENS WHAT THAT NUMBER MEANS", opened.open === true);
+    ok("...and the note is not empty", opened.text > 40, `${opened.text} chars`);
+
+    // Every row has to span its own table's head, detail rows included. The
+    // colspan here is derived from the pool size, and ui.js records getting a
+    // hand-written one wrong twice.
+    const spans = await page.evaluate(() => {
+      const t = document.querySelector("table.cmpt");
+      if (!t) return { width: 0, bad: ["no comparison table rendered"] };
+      const width = [...t.querySelectorAll("thead tr")][0].children.length;
+      const bad = [];
+      for (const tr of t.querySelectorAll("tbody tr")) {
+        const n = [...tr.children].reduce((a, td) => a + (Number(td.getAttribute("colspan")) || 1), 0);
+        if (n !== width) bad.push(`${tr.className}: ${n} vs ${width}`);
+      }
+      return { width, bad };
+    });
+    ok("EVERY COMPARISON ROW SPANS ITS OWN TABLE HEAD",
+      spans.bad.length === 0, spans.bad.join("; "));
+    await browser.close(); server.close();
+  }
+
+  console.log("\nPHASE 4 — COMPARE AT WIDTH");
+  for (const w of [320, 390, 560, 768, 820, 1100, 1440]) {
+    const { page, browser, server, errors } = await open({ width: w, height: 900, hash: "#/joop/lineup" });
+    // One click per evaluate, for the reason the section above records: a
+    // batched second click lands on a node the repaint already detached, and
+    // the sweep then silently measures the single-pick panel instead of a
+    // table. Which is what it did, and three "ok"s were meaningless.
+    for (const _ of [0, 1]) {
+      await page.evaluate(() => {
+        const b = [...document.querySelectorAll('.prow:not(.dead) [data-cmp]:not([aria-pressed="true"])')][0];
+        if (b) b.click();
+      });
+      await page.waitForTimeout(120);
+    }
+    await page.evaluate(() => { location.hash = "#/joop/compare"; });
+    await page.waitForTimeout(300);
+    const m = await page.evaluate(() => {
+      const doc = document.documentElement;
+      const box = document.querySelector(".scroll");
+      const tbl = document.querySelector("table.cmpt");
+      // .mrow .ml, not ".cmpt .ml" - the first .ml in the table is the EMPTY
+      // corner cell of the header row, whose height is the tallest player
+      // heading. Measuring that read every two-line player name as a wrapped
+      // metric label, which is how this assertion passed at four widths while
+      // testing nothing.
+      const label = document.querySelector(".mrow .ml");
+      const labelBtn = document.querySelector(".mrow .ml .rowtog");
+      const content = document.querySelector("[data-content]");
+      return {
+        pageOverflow: doc.scrollWidth - doc.clientWidth,
+        boxScrolls: box ? box.scrollWidth > box.clientWidth : null,
+        tableW: tbl ? Math.round(tbl.getBoundingClientRect().width) : null,
+        contentW: content ? Math.round(content.getBoundingClientRect().width) : null,
+        labelW: label ? Math.round(label.getBoundingClientRect().width) : null,
+        // A wrapped inline element produces more than one client rect. The
+        // stylesheet sets white-space:nowrap on this column precisely so a
+        // metric name cannot break, so more than one rect means the rule is
+        // not applying - which is the thing worth knowing.
+        labelRects: labelBtn ? labelBtn.getClientRects().length : null,
+        labelClipped: label ? label.scrollWidth > label.clientWidth + 1 : null,
+      };
+    });
+    ok(`${w}px: no page errors`, errors.length === 0, errors.join("\n       "));
+    // THE DOCUMENT MUST NOT SCROLL SIDEWAYS. A wide table is allowed; the page
+    // is not. app.css records three fixed-layout fixes that all failed this.
+    ok(`${w}px: the DOCUMENT does not scroll sideways`, m.pageOverflow <= 1,
+      `overflowing by ${m.pageOverflow}px`);
+    ok(`${w}px: there IS a comparison table to measure`, m.tableW !== null,
+      "the sweep was measuring the single-pick panel, not a table");
+    ok(`${w}px: the metric label column has not collapsed`, m.labelW !== null && m.labelW >= 60,
+      `label column ${m.labelW}px`);
+    ok(`${w}px: a metric label does not break across lines`, m.labelRects === 1,
+      `${m.labelRects} client rects in a ${m.labelW}px column`);
+    ok(`${w}px: the label column is not clipping its text`, m.labelClipped !== true,
+      `label cell scrolls: ${m.labelW}px box`);
+    if (w >= 1100) {
+      ok(`${w}px: the table gets the full content width, not half of it`,
+        m.tableW !== null && m.contentW !== null && m.tableW > m.contentW * 0.8,
+        `table ${m.tableW}px inside ${m.contentW}px — a grid split it`);
+    }
+    await browser.close(); server.close();
+  }
+
+  console.log("\nPHASE 4 — RECAP");
+  {
+    const { page, browser, server, errors } = await open({ width: 1100, height: 900, hash: "#/joop/recap" });
+    ok("no page errors", errors.length === 0, errors.join("\n       "));
+    const r = await page.evaluate(() => ({
+      title: document.querySelector("[data-title]")?.textContent,
+      body: document.querySelector("[data-content]").textContent.replace(/\s+/g, " ").trim(),
+    }));
+    ok("Recap is reachable and titled", r.title === "Recap", `got "${r.title}"`);
+    // A FRESH BROWSER HAS NO LOG, so this is the state most readers meet first
+    // and it has to explain itself rather than render blank. The GRADED layout
+    // has no coverage here - it needs a seeded decision log plus published
+    // stats for the fixture's invented players - and is covered in
+    // test/v2-recap.test.mjs instead. Declared, not hidden.
+    ok("an ungraded league explains itself rather than rendering blank",
+      /Nothing graded yet/.test(r.body) && r.body.length > 120, r.body.slice(0, 160));
+    ok("...and names the per-device log as the likely reason",
+      /lives in this browser on this device/.test(r.body));
+    ok("no placeholder leaked", !/\bundefined\b|\bNaN\b|\[object Object\]/.test(r.body),
+      r.body.slice(0, 160));
+    await browser.close(); server.close();
+  }
+
+  console.log("\nPHASE 4 — METHODS");
+  {
+    const { page, browser, server, errors } = await open({ width: 1100, height: 900, hash: "#/joop/methods" });
+    ok("no page errors", errors.length === 0, errors.join("\n       "));
+    const r = await page.evaluate(() => {
+      const c = document.querySelector("[data-content]");
+      const secs = [...c.querySelectorAll("section.meth")].map((s) => s.id);
+      const links = [...c.querySelectorAll(".toc a")].map((a) => a.getAttribute("href"));
+      const dangling = links.filter((h) => {
+        const id = String(h).split("#").pop();
+        return !document.getElementById(id);
+      });
+      return {
+        title: document.querySelector("[data-title]")?.textContent,
+        leaguePicker: document.querySelector("[data-leagues]")?.hidden,
+        secs, links, dangling,
+        body: c.textContent.replace(/\s+/g, " "),
+        levels: c.querySelector("#replacement .lvl")?.textContent.replace(/\s+/g, " ").trim(),
+        sigmas: c.querySelector("#threshold .lvl")?.textContent.replace(/\s+/g, " ").trim(),
+      };
+    });
+    ok("Methods is reachable and titled", r.title === "Methods", `got "${r.title}"`);
+    ok("IT IS LEAGUE-SCOPED NOW, so the league picker is showing",
+      r.leaguePicker === false, "the picker is hidden on a league-scoped route");
+    ok("all nine sections rendered", r.secs.length === 9, r.secs.join(","));
+    ok("NO CONTENTS LINK POINTS AT NOTHING", r.dangling.length === 0, r.dangling.join(", "));
+
+    // The measured halves are the reason this page is per-league. If they
+    // degraded, the page still looks fine - the silent-degradation failure.
+    ok("MEASURED REPLACEMENT LEVELS ARRIVED", /\d/.test(r.levels || ""), r.levels);
+    ok("MEASURED SIGMA ARRIVED", /\d/.test(r.sigmas || ""), r.sigmas);
+    ok("the passing-TD weight is quoted from this league",
+      /pays 4\.0 for a passing touchdown/.test(r.body),
+      "expected the read value, not a hardcoded claim");
+    ok("the stale 'both your leagues' claim is gone", !/both your leagues/i.test(r.body));
+
+    // The split: a live per-load fact must not be restated on a methodology
+    // page, because the copy here will be the stale one.
+    ok("THE STATUS STRIP'S CLAIMS ARE NOT DUPLICATED HERE",
+      !/Kickoff locking is (on|off)/i.test(r.body) && !/Usage through week/i.test(r.body));
+    ok("no placeholder leaked", !/\bundefined\b|\bNaN\b|\[object Object\]/.test(r.body),
+      r.body.slice(0, 160));
+    await browser.close(); server.close();
+  }
+
+  for (const w of [390, 820]) {
+    const { page, browser, server, errors } = await open({ width: w, height: 900, hash: "#/joop/methods" });
+    const m = await page.evaluate(() => {
+      const doc = document.documentElement;
+      const first = document.querySelector("section.meth");
+      return {
+        overflow: doc.scrollWidth - doc.clientWidth,
+        // An anchor jump must not land a heading under the sticky topbar.
+        scrollMargin: first ? parseInt(getComputedStyle(first).scrollMarginTop, 10) : 0,
+      };
+    });
+    ok(`${w}px: Methods does not scroll sideways`, m.overflow <= 1, `overflowing by ${m.overflow}px`);
+    ok(`${w}px: an anchored section clears the sticky topbar`, m.scrollMargin >= 40,
+      `scroll-margin-top ${m.scrollMargin}px`);
+    ok(`${w}px: no page errors`, errors.length === 0, errors.join("\n       "));
+    await browser.close(); server.close();
+  }
+
   console.log(`\nv2 render: ${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });
