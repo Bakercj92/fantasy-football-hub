@@ -1,0 +1,472 @@
+[
+ {
+  "id": "base-cheap-guards",
+  "baseline": true,
+  "sections": "CHEAP GUARDS"
+ },
+ {
+  "id": "base-chip-measurement",
+  "baseline": true,
+  "sections": "CHIP MEASUREMENT"
+ },
+ {
+  "id": "base-chopped-chopped",
+  "baseline": true,
+  "sections": "CHOPPED"
+ },
+ {
+  "id": "base-column-widths",
+  "baseline": true,
+  "sections": "COLUMN WIDTHS"
+ },
+ {
+  "id": "base-day-matrix",
+  "baseline": true,
+  "sections": "DAY MATRIX"
+ },
+ {
+  "id": "base-graded-recap",
+  "baseline": true,
+  "sections": "GRADED RECAP"
+ },
+ {
+  "id": "base-kickoff-re-solve",
+  "baseline": true,
+  "sections": "KICKOFF RE-SOLVE"
+ },
+ {
+  "id": "base-rest-status",
+  "baseline": true,
+  "sections": "REST OF THE STATUS"
+ },
+ {
+  "id": "base-signal-disagreement",
+  "baseline": true,
+  "sections": "SIGNAL DISAGREEMENT"
+ },
+ {
+  "id": "base-standing-defence",
+  "baseline": true,
+  "sections": "STANDING DEFENCE"
+ },
+ {
+  "id": "base-vacancy-block",
+  "baseline": true,
+  "sections": "VACANCY BLOCK"
+ },
+ {
+  "id": "base-waiver-night-waiver-night",
+  "baseline": true,
+  "sections": "WAIVER-NIGHT"
+ },
+ {
+  "id": "A1-sim-ignored",
+  "file": "test/render/v2-render.js",
+  "old": "SIM = ${sim};",
+  "new": "SIM = ${SIM};",
+  "sections": "DAY MATRIX|WAIVER-NIGHT|VACANCY BLOCK|STANDING DEFENCE|CHOPPED",
+  "note": "clock knob dead"
+ },
+ {
+  "id": "A2-week-ignored",
+  "file": "test/render/v2-render.js",
+  "old": "const wk = week || F.WEEK;",
+  "new": "const wk = F.WEEK;",
+  "sections": "WAIVER-NIGHT|GRADED RECAP|VACANCY BLOCK|STANDING DEFENCE|CHOPPED",
+  "note": "week knob dead"
+ },
+ {
+  "id": "A3-displayWeek-ignored",
+  "file": "test/render/v2-render.js",
+  "old": "display_week: displayWeek ?? wk",
+  "new": "display_week: wk",
+  "sections": "WAIVER-NIGHT",
+  "note": "displayWeek knob dead"
+ },
+ {
+  "id": "A4-seedLog-ignored",
+  "file": "test/render/v2-render.js",
+  "old": "  if (seedLog) {",
+  "new": "  if (false) {",
+  "sections": "GRADED RECAP",
+  "note": "seedLog knob dead"
+ },
+ {
+  "id": "A5-usage-ignored",
+  "file": "test/render/v2-render.js",
+  "old": "const base = usage || F.usagePayload();",
+  "new": "const base = F.usagePayload();",
+  "sections": "REST OF THE STATUS|SIGNAL DISAGREEMENT|GRADED RECAP",
+  "note": "usage knob dead"
+ },
+ {
+  "id": "A6-vacancy-ignored",
+  "file": "test/render/v2-render.js",
+  "old": "const vacPayload = vacancy || F.vacancyPayload();",
+  "new": "const vacPayload = F.vacancyPayload();",
+  "sections": "SIGNAL DISAGREEMENT|VACANCY BLOCK",
+  "note": "vacancy knob dead"
+ },
+ {
+  "id": "A7-defPts-ignored",
+  "file": "test/render/v2-render.js",
+  "old": "if (!defPts) return json(route, F.universe);",
+  "new": "return json(route, F.universe);",
+  "sections": "STANDING DEFENCE",
+  "note": "defPts knob dead"
+ },
+ {
+  "id": "A8-noFaab-ignored",
+  "file": "test/render/v2-render.js",
+  "old": "let settings = noFaab ? { playoff_week_start: 15 } : L.settings;",
+  "new": "let settings = L.settings;",
+  "sections": "CHOPPED",
+  "note": "noFaab knob dead"
+ },
+ {
+  "id": "A9-vacancyOk-ignored",
+  "file": "test/render/v2-render.js",
+  "old": "if (!vacancyOk) return",
+  "new": "if (false) return",
+  "sections": "SIGNAL DISAGREEMENT|VACANCY BLOCK",
+  "note": "vacancyOk knob dead"
+ },
+ {
+  "id": "A10-usageOk-ignored",
+  "file": "test/render/v2-render.js",
+  "old": "if (!usageOk) return",
+  "new": "if (false) return",
+  "sections": "SIGNAL DISAGREEMENT",
+  "note": "usageOk knob dead"
+ },
+ {
+  "id": "C1-netLocked-falsy",
+  "file": "v2/recap-page.js",
+  "old": "r.netLocked === null ? \"\" :",
+  "new": "!r.netLocked ? \"\" :",
+  "sections": "GRADED RECAP",
+  "note": "phase-4 survivor: zero lockout total dropped"
+ },
+ {
+  "id": "C2-tie-erased",
+  "file": "v2/recap-page.js",
+  "old": "const tie = row.delta === 0;",
+  "new": "const tie = false;",
+  "sections": "GRADED RECAP",
+  "note": "tie delta exact zero"
+ },
+ {
+  "id": "C3-tie-body",
+  "file": "v2/recap-page.js",
+  "old": "      : row.delta === 0\n",
+  "new": "      : false\n",
+  "sections": "GRADED RECAP",
+  "note": "tie body says cost 0.0"
+ },
+ {
+  "id": "C4-lockout-unmeasured",
+  "file": "v2/recap-page.js",
+  "old": "const unmeasured = row.delta === null;",
+  "new": "const unmeasured = false;",
+  "sections": "GRADED RECAP",
+  "note": "null lockout shown as number"
+ },
+ {
+  "id": "C5-good-inverted",
+  "file": "v2/recap-page.js",
+  "old": "row.held ? \" good\" : \"\"}\">${sgn(row.delta)}",
+  "new": "row.held ? \"\" : \" good\"}\">${sgn(row.delta)}",
+  "sections": "GRADED RECAP",
+  "note": "good tag on the loss"
+ },
+ {
+  "id": "C6-unmeasured-css",
+  "file": "v2/app.css",
+  "old": ".card .disc .tag.unmeasured{color:var(--c-dim);font-weight:500}",
+  "new": ".card .disc .tag.unmeasured{}",
+  "sections": "GRADED RECAP",
+  "note": "unmeasured computes like plain"
+ },
+ {
+  "id": "C7-partial-coverage",
+  "file": "v2/recap-page.js",
+  "old": "Math.round((row.coverage || 0) * 100)",
+  "new": "Math.round((row.coverage || 0) * 10)",
+  "sections": "GRADED RECAP",
+  "note": "coverage pct wrong"
+ },
+ {
+  "id": "C8-panel-id-unstable",
+  "file": "v2/recap-page.js",
+  "old": "const id = `rc-l-${esc(row.week)}`;",
+  "new": "const id = `rc-l-${esc(row.week)}-${Math.random().toString(36).slice(2,6)}`;",
+  "sections": "GRADED RECAP",
+  "note": "id not stable across repaint"
+ },
+ {
+  "id": "G1-claims-never-lead",
+  "file": "v2/logic/today.js",
+  "old": "return d !== null && (day === d || day === (d + 6) % 7);",
+  "new": "return false;",
+  "sections": "DAY MATRIX",
+  "note": "claims never lead"
+ },
+ {
+  "id": "G1b-recap-gate-always",
+  "file": "v2/router.js",
+  "old": "if (page === \"recap\") return RECAP_NAV_DAYS.has(day);",
+  "new": "if (page === \"recap\") return true;",
+  "sections": "DAY MATRIX",
+  "note": "nav gate dead"
+ },
+ {
+  "id": "G2-reads-display-week",
+  "file": "v2/pipeline.js",
+  "old": "state.week = sleeper.pricingWeek(nfl);",
+  "new": "state.week = nfl.display_week ?? sleeper.pricingWeek(nfl);",
+  "sections": "WAIVER-NIGHT",
+  "note": "the waiver-night trap"
+ },
+ {
+  "id": "G2b-header-drops-graded",
+  "file": "v2/shell.js",
+  "old": "gradedWeek ? ` \u00b7 wk ${esc(gradedWeek)} graded` : \"\"",
+  "new": "\"\"",
+  "sections": "WAIVER-NIGHT",
+  "note": "header names one week"
+ },
+ {
+  "id": "G4-snaps-dropped",
+  "file": "v2/status.js",
+  "old": "if (u.sources?.snap_counts && u.sources.snap_counts.ok === false) {",
+  "new": "if (false) {",
+  "sections": "REST OF THE STATUS",
+  "note": "snap warning gone"
+ },
+ {
+  "id": "G4b-snaps-quiet",
+  "file": "v2/status.js",
+  "old": "rows.push({ level: \"warn\", key: \"snaps\",",
+  "new": "rows.push({ level: \"ok\", key: \"snaps\",",
+  "sections": "REST OF THE STATUS",
+  "note": "snap row not flagged"
+ },
+ {
+  "id": "G6-never-name",
+  "file": "v2/status.js",
+  "old": "short.length <= NAME_CLUBS_UPTO ?",
+  "new": "false ?",
+  "sections": "REST OF THE STATUS",
+  "note": "two clubs counted not named"
+ },
+ {
+  "id": "G8-caveat-dropped",
+  "file": "v2/wire-page.js",
+  "old": "const caveat = v.partial",
+  "new": "const caveat = false",
+  "sections": "VACANCY BLOCK",
+  "note": "partial week caveat gone"
+ },
+ {
+  "id": "G8b-caveat-always",
+  "file": "v2/wire-page.js",
+  "old": "const caveat = v.partial",
+  "new": "const caveat = true",
+  "sections": "VACANCY BLOCK",
+  "note": "caveat on a full week"
+ },
+ {
+  "id": "G9-calm-always",
+  "file": "v2/wire-page.js",
+  "old": "v.counts ? \"\" : \" calm\");",
+  "new": "\" calm\");",
+  "sections": "STANDING DEFENCE",
+  "note": "leak reads as settled"
+ },
+ {
+  "id": "G9b-better-says-tie",
+  "file": "v2/wire-page.js",
+  "old": "head = `<b>${esc(v.current.name)} is the better bet</b>",
+  "new": "head = `<b>Nothing between them</b>",
+  "sections": "STANDING DEFENCE",
+  "note": "wrong quiet verdict"
+ },
+ {
+  "id": "G9c-stream-names-own",
+  "file": "v2/wire-page.js",
+  "old": "head = `<b>Stream ${esc(v.best.name)}</b> <span class=\"over\">over <b>${esc(v.current.name)}</b> in your ${slot}</span>`;",
+  "new": "head = `<b>Stream ${esc(v.current.name)}</b> <span class=\"over\">over <b>${esc(v.current.name)}</b> in your ${slot}</span>`;",
+  "sections": "STANDING DEFENCE",
+  "note": "stream your own defence"
+ },
+ {
+  "id": "G9d-tag-sign",
+  "file": "v2/wire-page.js",
+  "old": "case \"actionable\":\n      head = `<b>Stream ${esc(v.best.name)}</b> <span class=\"over\">over <b>${esc(v.current.name)}</b> in your ${slot}</span>`;\n      tag = sgn(v.gap);",
+  "new": "case \"actionable\":\n      head = `<b>Stream ${esc(v.best.name)}</b> <span class=\"over\">over <b>${esc(v.current.name)}</b> in your ${slot}</span>`;\n      tag = sgn(-v.gap);",
+  "sections": "STANDING DEFENCE",
+  "note": "gap sign inverted"
+ },
+ {
+  "id": "G12-faab-sentence-gone",
+  "file": "v2/wire-page.js",
+  "old": "const faab = typeof L.faabLeft === \"number\"",
+  "new": "const faab = false",
+  "sections": "CHOPPED",
+  "note": "no FAAB figure at all"
+ },
+ {
+  "id": "G13-typo-var",
+  "file": "v2/app.css",
+  "old": ".card{background:var(--c-surface);",
+  "new": ".card{background:var(--c-surfac);",
+  "sections": "CHEAP GUARDS",
+  "note": "undefined var on bg"
+ },
+ {
+  "id": "G13b-typo-text",
+  "file": "v2/app.css",
+  "old": ".note{font-size:var(--s2);color:var(--c-mute);",
+  "new": ".note{font-size:var(--s2);color:var(--c-mutee);",
+  "sections": "CHEAP GUARDS",
+  "note": "undefined var on text"
+ },
+ {
+  "id": "G14-title-gone",
+  "file": "v2/lineup-page.js",
+  "old": "title=\"${esc(flagTitle(f))}\">",
+  "new": "title=\"\">",
+  "sections": "CHEAP GUARDS",
+  "note": "chip title stripped"
+ },
+ {
+  "id": "G14b-chip-unstyled",
+  "file": "v2/app.css",
+  "old": ".chip{display:inline-block;",
+  "new": ".chipX{display:inline-block;",
+  "sections": "CHEAP GUARDS|CHIP MEASUREMENT",
+  "note": "chip rule gone"
+ },
+ {
+  "id": "G15-win-plain",
+  "file": "v2/app.css",
+  "old": ".cmpt .cv.win{color:var(--c-act);font-weight:650}",
+  "new": ".cmpt .cv.win{}",
+  "sections": "CHEAP GUARDS",
+  "note": "win computes like loss"
+ },
+ {
+  "id": "H1-chip-fat",
+  "file": "v2/app.css",
+  "old": "padding:1px var(--sp2);\n  border-radius:var(--r-pill);",
+  "new": "padding:1px 60px;\n  border-radius:var(--r-pill);",
+  "sections": "CHIP MEASUREMENT"
+ },
+ {
+  "id": "H2-chip-nowrap-name",
+  "file": "v2/app.css",
+  "old": ".chip{display:inline-block;margin-left:var(--sp1);",
+  "new": ".chip{display:inline-block;margin-left:var(--sp1);min-width:150px;",
+  "sections": "CHIP MEASUREMENT",
+  "note": "chip forces min width"
+ },
+ {
+  "id": "G1c-claims-lead-wrong-day",
+  "file": "v2/logic/today.js",
+  "old": "return d !== null && (day === d || day === (d + 6) % 7);",
+  "new": "return d !== null && (day === d || day === (d + 1) % 7);",
+  "sections": "DAY MATRIX",
+  "note": "claims lead Wed+Thu instead of Tue+Wed"
+ },
+ {
+  "id": "G13c-typo-shorthand",
+  "file": "v2/app.css",
+  "old": "padding:1px var(--sp2);\n  border-radius:var(--r-pill);",
+  "new": "padding:1px var(--sp22);\n  border-radius:var(--r-pill);",
+  "sections": "CHEAP GUARDS",
+  "note": "undefined var inside a shorthand"
+ },
+ {
+  "id": "H2-chip-minwidth",
+  "file": "v2/app.css",
+  "old": ".chip{display:inline-block;margin-left:var(--sp1);",
+  "new": ".chip{display:inline-block;margin-left:var(--sp1);min-width:150px;",
+  "sections": "CHIP MEASUREMENT"
+ },
+ {
+  "id": "H3-names-shred",
+  "file": "v2/app.css",
+  "old": "font:inherit;font-weight:600;text-align:left}",
+  "new": "font:inherit;font-weight:600;text-align:left;word-break:break-all;max-width:5ch}",
+  "sections": "COLUMN WIDTHS|CHIP MEASUREMENT",
+  "note": "names shred across lines"
+ },
+ {
+  "id": "H4-chip-gone",
+  "file": "v2/lineup-page.js",
+  "old": "f ? ` <span class=\"chip ${esc(SEV_CLS[f.severity] || \"q\")}\"",
+  "new": "f ? ` <span class=\"chipX ${esc(SEV_CLS[f.severity] || \"q\")}\"",
+  "sections": "CHIP MEASUREMENT",
+  "note": "no chips to measure"
+ },
+ {
+  "id": "H5-name-col-collapse",
+  "file": "v2/app.css",
+  "old": ".nm{font-weight:600}",
+  "new": ".nm{font-weight:600;width:40px;max-width:40px;overflow:hidden}",
+  "sections": "COLUMN WIDTHS|CHIP MEASUREMENT",
+  "note": "name column collapses"
+ },
+ {
+  "id": "G10-value-rows-shown",
+  "file": "v2/compare-page.js",
+  "old": "const market = L.fcalc && !L.fcalc.ok",
+  "new": "const market = false",
+  "sections": "CHEAP GUARDS",
+  "note": "no warning when market fails"
+ },
+ {
+  "id": "G10b-fcalc-knob-dead",
+  "file": "test/render/v2-render.js",
+  "old": "if (!fcalcOk) return route.abort(\"failed\");",
+  "new": "",
+  "sections": "CHEAP GUARDS",
+  "note": "fcalc knob dead"
+ },
+ {
+  "id": "G1d-waiverDay-knob-dead",
+  "file": "test/render/v2-render.js",
+  "old": "if (waiverDay != null) settings = { ...settings, waiver_day_of_week: waiverDay };",
+  "new": "",
+  "sections": "DAY MATRIX",
+  "note": "waiverDay knob dead"
+ },
+ {
+  "id": "H6-chip-nowrap",
+  "file": "v2/app.css",
+  "old": ".chip{display:inline-block;margin-left:var(--sp1);",
+  "new": ".chip{display:inline-block;margin-left:var(--sp1);white-space:nowrap;padding-right:40px;",
+  "sections": "CHIP MEASUREMENT"
+ },
+ {
+  "id": "G16a-watcher-drops-usage",
+  "file": "v2/pipeline.js",
+  "old": "      attachMarket();\n      attachUsage();\n      for (const e of state.cfg.leagues) attachFcalcFor(e.key);",
+  "new": "      attachMarket();\n      for (const e of state.cfg.leagues) attachFcalcFor(e.key);",
+  "sections": "KICKOFF RE-SOLVE"
+ },
+ {
+  "id": "G16b-watcher-dead",
+  "file": "v2/pipeline.js",
+  "old": "    if (!flipped) return;",
+  "new": "    return;",
+  "sections": "KICKOFF RE-SOLVE"
+ },
+ {
+  "id": "G16c-watcher-drops-fcalc",
+  "file": "v2/pipeline.js",
+  "old": "      attachUsage();\n      for (const e of state.cfg.leagues) attachFcalcFor(e.key);\n      attachRos();",
+  "new": "      attachUsage();\n      attachRos();",
+  "sections": "KICKOFF RE-SOLVE"
+ }
+]

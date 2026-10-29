@@ -65,7 +65,8 @@ async function open({ width, height, hash = "", usageOk = true, vacancyOk = true
                       scheduleOk = true, sim = SIM, settle = 900,
                       week = null, displayWeek = null, seedLog = null,
                       usage = null, vacancy = null, upstreamUpdatedAt = null,
-                      defPts = null, trendingOk = true, noFaab = false }) {
+                      defPts = null, trendingOk = true, noFaab = false,
+                      waiverDay = null, fcalcOk = true }) {
   const server = await serve();
   const port = server.address().port;
   const exe = chromePath();
@@ -125,7 +126,16 @@ async function open({ width, height, hash = "", usageOk = true, vacancyOk = true
       }
       // A league with no FAAB budget at all. The wire renders the figure, so
       // its absence is a branch, not a missing number.
-      const settings = noFaab ? { playoff_week_start: 15 } : L.settings;
+      //
+      // THE WAIVER DAY, LIKEWISE. No fixture league carries
+      // `waiver_day_of_week`, so claimsLead() was false on every day of the
+      // week and the day matrix could only ever prove the Recap nav gate - the
+      // one day-dependent ORDER on the site (claims above lineup on the
+      // processing day and the day before) was unreachable from here. Phase 5
+      // audit, caught by mutation: `claimsLead() -> false` passed all 27 day
+      // checks. All three real leagues are set to 2 (Wednesday 03:00 ET).
+      let settings = noFaab ? { playoff_week_start: 15 } : L.settings;
+      if (waiverDay != null) settings = { ...settings, waiver_day_of_week: waiverDay };
       return json(route, { ...L, settings, league_id: m[1] });
     }
     m = p.match(/^\/v1\/league\/(\d+)\/rosters$/);
@@ -172,6 +182,10 @@ async function open({ width, height, hash = "", usageOk = true, vacancyOk = true
     assets: [{ name: `stats_player_week_${F.SEASON}.csv`,
                updated_at: upstreamUpdatedAt || "2026-09-15T09:00:00Z" }] }));
   await page.route("**://api.fantasycalc.com/**", (route) => {
+    // The deliberate failure path the README says to keep. Phase 5 recorded it
+    // as a non-port; the audit disagreed - it is one launch, and it is the
+    // only proof that Compare hides the value rows rather than guessing them.
+    if (!fcalcOk) return route.abort("failed");
     const q = new URL(route.request().url()).searchParams;
     return json(route, F.fcalc(Number(q.get("numQbs")) || 1));
   });
@@ -325,17 +339,28 @@ const ok = (name, cond, detail = "") => {
       // Count real line boxes over the NAME text node. A height threshold is
       // not a wrap test: the cell also holds a position label, and row padding
       // is a design choice that would make every row look wrapped.
-      const textNode = [...cell.childNodes].find((n) => n.nodeType === 3 && n.textContent.trim());
+      //
+      // THE NAME IS INSIDE THE ROW BUTTON, and has been since phase 3 made
+      // every row open in place. This probe used to look for a text node that
+      // was a direct child of the cell, found none on any row, and fell back
+      // to "1 line" - so the wrap half of this check passed at every width
+      // from phase 3 until the phase 5 audit, whatever the names did. Found by
+      // mutation (word-break:break-all on .rowtog, names shredded, all green).
+      // `found` is asserted below so a future DOM change fails loudly instead.
+      const nameText = (c) => [...(c.querySelector(":scope > .rowtog") || c).childNodes]
+        .find((n) => n.nodeType === 3 && n.textContent.trim());
+      const textNode = nameText(cell);
       let lines = 1;
       if (textNode) {
         const r = document.createRange(); r.selectNodeContents(textNode);
         lines = r.getClientRects().length || 1;
       }
       // And the worst case on the page, not just the first row.
-      let worst = 1, worstName = "";
+      let worst = 1, worstName = "", found = 0;
       for (const c of document.querySelectorAll("[data-content] tbody tr .nm")) {
-        const tn = [...c.childNodes].find((n) => n.nodeType === 3 && n.textContent.trim());
+        const tn = nameText(c);
         if (!tn) continue;
+        found += 1;
         const rr = document.createRange(); rr.selectNodeContents(tn);
         const n = rr.getClientRects().length || 1;
         if (n > worst) { worst = n; worstName = tn.textContent.trim(); }
@@ -343,10 +368,13 @@ const ok = (name, cond, detail = "") => {
       return {
         name: Math.round(cell.getBoundingClientRect().width),
         overflow: doc.scrollWidth - doc.clientWidth,
-        lines, worst, worstName,
+        lines, worst, worstName, found, cells: document.querySelectorAll("[data-content] tbody tr .nm").length,
       };
     });
     if (!m) { fail++; console.log(`  FAIL ${w}px: no lineup row rendered`); }
+    else if (m.found === 0 || m.found < m.cells / 2) {
+      fail++; console.log(`  FAIL ${w}px  the wrap probe found the name in only ${m.found} of ${m.cells} cells - it is measuring nothing`);
+    }
     else {
       // The defect class this guards is the name column collapsing until a
       // long name shreds across many lines (6-10 at 59px, Phase 3a and again
@@ -1359,6 +1387,37 @@ const ok = (name, cond, detail = "") => {
     await browser.close(); server.close();
   }
 
+  // THE CLASS ORDER, BY DAY. The rubric for G1 was "which urgency classes
+  // Today renders and IN WHAT ORDER", and as first ported the five days above
+  // render the same order, because no fixture league sets a waiver day and
+  // claimsLead() is therefore false all week. Mutating claimsLead() to return
+  // false passed all 27 checks. `waiverDay: 2` is the real setting on all
+  // three leagues (Wednesday 03:00 ET), so claims lead on Tuesday - when the
+  // bid is placed - and Wednesday, and nowhere else. Phase 5 audit.
+  for (const d of [
+    { label: "Sunday", sim: D_SUN, lead: false },
+    { label: "Monday", sim: D_MON, lead: false },
+    { label: "Tuesday", sim: D_TUE, lead: true },
+    { label: "Wednesday", sim: D_WED, lead: true },
+    { label: "Thursday", sim: D_THU, lead: false },
+  ]) {
+    const { page, browser, server, errors } = await open({
+      width: 1280, height: 1000, hash: "#/today", sim: d.sim, waiverDay: 2 });
+    const heads = await page.evaluate(() => [...document.querySelectorAll(".clsx .clsh")]
+      .map((h) => h.textContent.replace(/\s+/g, " ").trim()));
+    const at = (rx) => heads.findIndex((h) => rx.test(h));
+    const iClaims = at(/^(Claims process today|On the wire)\b/), iLineup = at(/^Lineup corrections\b/);
+    ok(`${d.label}, waiver day set: both a claims and a lineup class are on the page to order`,
+      iClaims >= 0 && iLineup >= 0, heads.join(" | "));
+    ok(`${d.label}, waiver day set: claims ${d.lead ? "LEAD" : "follow"} the lineup calls`,
+      d.lead ? iClaims < iLineup : iClaims > iLineup, heads.join(" | "));
+    ok(`${d.label}, waiver day set: the claims class is called "${d.lead ? "Claims process today" : "On the wire"}"`,
+      d.lead ? /^Claims process today\b/.test(heads[iClaims] || "") : /^On the wire\b/.test(heads[iClaims] || ""),
+      heads[iClaims]);
+    ok(`${d.label}, waiver day set: no page errors`, errors.length === 0, errors.join("\n       "));
+    await browser.close(); server.close();
+  }
+
   console.log("\nPHASE 5 — THE WAIVER-NIGHT WEEK (G2)");
   // Measured live on 2026-10-06: display_week 4 while week 5 had advanced.
   // pipeline.js:130-134 records that reading display_week here priced the
@@ -1426,6 +1485,17 @@ const ok = (name, cond, detail = "") => {
     // reader cannot miss it and that it has not replaced the stamp.
     ok("...and the strip is FLAGGED, so it is visible without expanding",
       /has-(warn|bad)/.test(s.cls || ""), `class: ${s.cls}`);
+    // ...BUT THE STRIP IS ALWAYS FLAGGED ON THIS FIXTURE, by the unrecognised
+    // team ZZZ, so the check above passes with the snaps row demoted to "ok".
+    // The fixture-sort-order dependency had moved, not gone. Phase 5 audit,
+    // caught by mutating the snaps row's level. Read the ROW's own level.
+    const snapRow = await page.evaluate(() => {
+      const r = [...document.querySelectorAll(".status .srow")]
+        .find((d) => /Snap counts did not publish/.test(d.textContent));
+      return r ? r.className : null;
+    });
+    ok("...and it is the SNAPS ROW ITSELF that carries the warning, not a neighbour",
+      /\bwarn\b/.test(snapRow || ""), `snaps row class: ${snapRow}`);
     ok("...and the warning sits OVER A FRESH MIRROR STAMP, which is the trap",
       /Usage through week 3/.test(s.text) && /Snap counts did not publish/.test(s.text),
       s.text.slice(0, 260));
@@ -1665,11 +1735,18 @@ const ok = (name, cond, detail = "") => {
   // unreachable. KC is the rostered defence in every fixture lineup; BUF is
   // free. The calm/actionable distinction is a CLASS, so a do-nothing row
   // styled like a claim passes any text check.
+  // HEAD AND TAG ARE READ BACK. They were captured and never asserted, so
+  // inverting the gap's sign ("-4.9" on a row telling you to stream) passed
+  // here AND in node, and swapping the quiet verdict for "Nothing between
+  // them" was caught only by v2-differential - the suite deleted at the swap.
+  // Phase 5 audit. The free BUF projects 10.2 against KC's 5.3: +4.9.
   for (const sc of [
     { label: "the live 2026-10-06 leak (rostered 5.3, free 10.2)",
-      defPts: { KC: 5.3, BUF: 10.2 }, calm: false },
+      defPts: { KC: 5.3, BUF: 10.2 }, calm: false,
+      head: /^Stream BUF over KC in your DEF$/, tag: "+4.9" },
     { label: "yours is better — quiet, and still shown",
-      defPts: { KC: 16.0 }, calm: true },
+      defPts: { KC: 16.0 }, calm: true,
+      head: /^KC is the better bet holding your DEF$/, tag: /^-\d+\.\d$/ },
   ]) {
     const { page, browser, server, errors } = await open({
       width: 1280, height: 1100, hash: "#/joop/wire", sim: D_WED, week: 5, defPts: sc.defPts });
@@ -1692,6 +1769,10 @@ const ok = (name, cond, detail = "") => {
       "no #wdef row rendered");
     ok(`DEF, ${sc.label}: it reads as ${sc.calm ? "settled" : "something to do"}`,
       r.calm === sc.calm, `calm=${r.calm}, head: ${r.head}`);
+    ok(`DEF, ${sc.label}: the head names the right verdict and the right defences`,
+      sc.head.test(r.head || ""), `head: ${r.head}`);
+    ok(`DEF, ${sc.label}: the tag carries the gap, signed free-minus-yours`,
+      typeof sc.tag === "string" ? r.tag === sc.tag : sc.tag.test(r.tag || ""), `tag: ${r.tag}`);
     ok(`DEF, ${sc.label}: the reasoning is not empty`, (r.why || "").length > 40,
       `${(r.why || "").length} chars`);
     ok(`DEF, ${sc.label}: it says projection gap, never a matchup read`,
@@ -1771,6 +1852,14 @@ const ok = (name, cond, detail = "") => {
       width: 1280, height: 1100, hash: "#/joop/wire", sim: D_WED, week: 5, noFaab: true });
     const t = await page.evaluate(() =>
       document.querySelector("[data-content]").textContent.replace(/\s+/g, " "));
+    // THE KNOB HAS TO HAVE APPLIED. As first written, deleting the noFaab
+    // branch from the route handler left both checks below green, because
+    // "$77 of FAAB left" contains neither "undefined" nor "$NaN". Phase 5 audit.
+    const faabLeft = await page.evaluate(() => window.__ffh_state?.leagues?.joop?.faabLeft);
+    ok("NO-BUDGET KNOB APPLIED: the league really has no FAAB this load",
+      faabLeft === null, `state.leagues.joop.faabLeft = ${faabLeft}`);
+    ok("...and the wire drops the FAAB sentence instead of printing a figure",
+      !/of FAAB left/.test(t) && !/\$\d/.test(t), (t.match(/[^.]*FAAB[^.]*/) || [""])[0].slice(0, 160));
     ok("a league with NO budget says nothing about FAAB rather than $undefined",
       !/\bundefined\b|\$NaN/.test(t), t.slice(0, 200));
     ok("...and the page still renders a wire", t.length > 200 && errors.length === 0,
@@ -1786,22 +1875,46 @@ const ok = (name, cond, detail = "") => {
     // nothing else on this page catches it - and phase 5 came within one
     // verbatim copy of shipping two: the root sheet's chip rule carries
     // var(--warn) and var(--bad), neither of which exists in v2/app.css.
+    //
+    // PHASE 5 AUDIT: AS FIRST WRITTEN THIS COULD NOT FAIL. It walked computed
+    // styles for a value still containing `var(`, but a browser never reports
+    // one: an undefined custom property is "invalid at computed-value time"
+    // and resolves to the property's initial or inherited value - transparent
+    // for a background, the parent's colour for text. Two typo'd names
+    // (`--c-surfac` on .card, `--c-mutee` on .note) both passed. So the check
+    // now reads the SOURCE: every `var(--x)` the stylesheet references must be
+    // declared somewhere in it, unless the reference carries its own fallback.
     const vars = await page.evaluate(() => {
-      const bad = [];
-      for (const el of document.querySelectorAll("*")) {
-        const cs = getComputedStyle(el);
-        for (const prop of ["backgroundColor", "color", "borderTopColor", "fill"]) {
-          const v = cs[prop];
-          if (typeof v === "string" && v.includes("var(")) {
-            bad.push(`${el.className || el.tagName}.${prop}=${v}`);
+      const refs = new Set(), defined = new Set();
+      const scan = (rules) => {
+        for (const r of rules) {
+          if (r.cssRules) scan(r.cssRules);
+          if (!r.style) continue;
+          for (let i = 0; i < r.style.length; i++) {
+            if (r.style[i].startsWith("--")) defined.add(r.style[i]);
           }
+          // cssText, not getPropertyValue: a longhand under a shorthand that
+          // uses var() reads back EMPTY ("pending substitution"), so a per-
+          // property scan silently skips `padding:1px var(--sp2)`.
+          for (const m of r.style.cssText.matchAll(/var\(\s*(--[\w-]+)\s*(,)?/g)) if (!m[2]) refs.add(m[1]);
         }
+      };
+      let sheets = 0;
+      for (const sh of document.styleSheets) {
+        try { scan(sh.cssRules); sheets += 1; } catch { /* cross-origin: not ours */ }
       }
-      return { bad: bad.slice(0, 8), count: bad.length,
+      for (const el of document.querySelectorAll("[style]")) {
+        for (const m of el.getAttribute("style").matchAll(/var\(\s*(--[\w-]+)\s*(,)?/g)) if (!m[2]) refs.add(m[1]);
+      }
+      const bad = [...refs].filter((n) => !defined.has(n));
+      return { bad, count: bad.length, refs: refs.size, defined: defined.size, sheets,
                bodyBg: getComputedStyle(document.body).backgroundColor };
     });
+    ok("the variable scan actually READ the stylesheet",
+      vars.sheets > 0 && vars.refs > 20 && vars.defined > 20,
+      `${vars.sheets} sheets, ${vars.refs} names referenced, ${vars.defined} declared`);
     ok("NO UNRESOLVED CUSTOM PROPERTY ANYWHERE ON THE PAGE",
-      vars.count === 0, `${vars.count}: ${vars.bad.join("; ")}`);
+      vars.count === 0, `${vars.count}: ${vars.bad.join(", ")}`);
     ok("...and the theme actually applied to the body",
       vars.bodyBg !== "rgba(0, 0, 0, 0)" && vars.bodyBg !== "transparent", vars.bodyBg);
 
@@ -1877,39 +1990,174 @@ const ok = (name, cond, detail = "") => {
     await browser.close(); server.close();
   }
 
+  {
+    // G10, PORTED AFTER ALL. Phase 5 recorded FantasyCalc-unreachable as a
+    // deliberate non-port; the audit disagreed, because the README's own rule
+    // is "keep the deliberate failure paths", the old harness carried it, and
+    // it is the only proof that Compare HIDES the value rows rather than
+    // guessing them when the market layer does not arrive.
+    const { page, browser, server, errors } = await open({
+      width: 1100, height: 900, hash: "#/joop/lineup", fcalcOk: false });
+    for (const _ of [0, 1]) {
+      await page.evaluate(() => {
+        const b = [...document.querySelectorAll('.prow:not(.dead) [data-cmp]:not([aria-pressed="true"])')][0];
+        if (b) b.click();
+      });
+      await page.waitForTimeout(120);
+    }
+    await page.evaluate(() => { location.hash = "#/joop/compare"; });
+    await page.waitForTimeout(350);
+    const r = await page.evaluate(() => ({
+      knob: window.__ffh_state?.leagues?.joop?.fcalc?.ok,
+      warn: document.querySelector("[data-content] .frow.warn")?.textContent.replace(/\s+/g, " ").trim(),
+      labels: [...document.querySelectorAll(".cmpt .mrow .ml")].map((m) => m.textContent.trim()),
+      body: document.querySelector("[data-content]").textContent.replace(/\s+/g, " "),
+    }));
+    ok("FANTASYCALC DOWN: the knob applied - the market layer really failed",
+      r.knob === false, `fcalc.ok = ${r.knob}`);
+    ok("FANTASYCALC DOWN: Compare says so in plain words",
+      /Market values unavailable this load/.test(r.warn || ""), r.warn || "no .frow.warn");
+    ok("FANTASYCALC DOWN: the comparison still renders its other rows",
+      r.labels.length >= 4 && r.labels.includes("Projected"), r.labels.join(", "));
+    ok("FANTASYCALC DOWN: the value and rank rows are HIDDEN, not shown blank or guessed",
+      !r.labels.some((l) => /^Market (value|rank)$/.test(l)), r.labels.join(", "));
+    ok("FANTASYCALC DOWN: no placeholder leaked",
+      !/\bundefined\b|\bNaN\b|\[object Object\]/.test(r.body), r.body.slice(0, 160));
+    ok("FANTASYCALC DOWN: no page errors beyond the deliberate outage",
+      errors.filter((e) => !/net::ERR_FAILED/.test(e)).length === 0,
+      errors.filter((e) => !/net::ERR_FAILED/.test(e)).join("\n       "));
+    await browser.close(); server.close();
+  }
+
   console.log("\nPHASE 5 — THE CHIP MEASUREMENT PASS (G14)");
   // The reason phase 4 deferred this rule: a padded badge adds width INSIDE
   // the player-name cell on two pages that were already live and already
   // measured, and app.css:176 plus constraint 5 record a name column
   // collapsing to 59px with exactly that class of change. Measured on both
   // pages that emit a chip, at the four widths where it could bite.
-  for (const hash of ["#/joop/lineup", "#/joop/wire"]) {
+  //
+  // PHASE 5 AUDIT. As first committed, every measurement in this block was
+  // vacuous: the name text node was looked for as a direct child of .nm, but
+  // the name sits inside .rowtog, so every row hit `continue`, `narrowest`
+  // stayed unset and passed as null, and `worst` stayed 1. Mutations making
+  // the chip 120px wider or forcing a 150px min-width all passed. And Wire
+  // emits no chip at all - it has no .nm cell - so that half measured an empty
+  // page. Wire is replaced by Ball Knowers, which carries four chips and the
+  // narrowest name column on the site (131px at 320), and each scenario now
+  // has to FIND names and chips before its measurement counts.
+  for (const hash of ["#/joop/lineup", "#/bku/lineup"]) {
     for (const w of [320, 360, 390, 560]) {
       const { page, browser, server, errors } = await open({ width: w, height: 1000, hash });
       const m = await page.evaluate(() => {
         const doc = document.documentElement;
-        let worst = 1, worstName = "", narrowest = 9999;
+        let worst = 1, worstName = "", narrowest = 9999, found = 0;
         for (const c of document.querySelectorAll("[data-content] .nm")) {
-          const tn = [...c.childNodes].find((n) => n.nodeType === 3 && n.textContent.trim());
+          narrowest = Math.min(narrowest, Math.round(c.getBoundingClientRect().width));
+          const tn = [...(c.querySelector(":scope > .rowtog") || c).childNodes]
+            .find((n) => n.nodeType === 3 && n.textContent.trim());
           if (!tn) continue;
+          found += 1;
           const rr = document.createRange(); rr.selectNodeContents(tn);
           const n = rr.getClientRects().length || 1;
           if (n > worst) { worst = n; worstName = tn.textContent.trim(); }
-          narrowest = Math.min(narrowest, Math.round(c.getBoundingClientRect().width));
         }
         return { overflow: doc.scrollWidth - doc.clientWidth,
                  worst, worstName,
-                 narrowest: narrowest === 9999 ? null : narrowest,
-                 chips: document.querySelectorAll("[data-content] .chip").length };
+                 narrowest: narrowest === 9999 ? null : narrowest, found,
+                 cells: document.querySelectorAll("[data-content] .nm").length,
+                 chips: document.querySelectorAll("[data-content] .nm .chip").length,
+                 // The roster table's OWN width against its wrapper. The page
+                 // lets a wide table scroll inside itself rather than scroll the
+                 // document, so a fat chip never shows up as document overflow:
+                 // it widens the table, which slides the projection column off
+                 // a phone. Measured by the audit: a chip 104px wider left every
+                 // other check here green while the table ran 415px in a 286px
+                 // wrapper at 320 and 390. The fold design says name and
+                 // projection are always visible, so on a phone it must fit.
+                 tableOver: (() => { const t = document.querySelector("[data-content] table");
+                   return t ? t.parentElement.scrollWidth - t.parentElement.clientWidth : null; })() };
       });
       const cap = w <= 360 ? 2 : 1;
+      ok(`chip pass ${hash} ${w}px: THERE ARE CHIPS HERE TO MEASURE, and the probe found the names`,
+        m.chips > 0 && m.found > 0 && m.found === m.cells,
+        `${m.chips} chips, name found in ${m.found} of ${m.cells} cells`);
       ok(`chip pass ${hash} ${w}px: the badge did not collapse the name column`,
-        m.narrowest === null || m.narrowest >= 110, `narrowest name cell ${m.narrowest}px`);
+        m.narrowest !== null && m.narrowest >= 110, `narrowest name cell ${m.narrowest}px`);
       ok(`chip pass ${hash} ${w}px: and did not shred a long name`,
         m.worst <= cap, `worst ${m.worst} lines, cap ${cap} ("${m.worstName}")`);
+      ok(`chip pass ${hash} ${w}px: and the roster table still fits without scrolling inside itself`,
+        m.tableOver !== null && m.tableOver <= 1, `table overflows its wrapper by ${m.tableOver}px`);
       ok(`chip pass ${hash} ${w}px: and did not push the page sideways`,
         m.overflow <= 1, `overflowing by ${m.overflow}px`);
       ok(`chip pass ${hash} ${w}px: no page errors`, errors.length === 0, errors.join("\n       "));
+      await browser.close(); server.close();
+    }
+  }
+
+  console.log("\nPHASE 5 AUDIT — THE KICKOFF RE-SOLVE, FOR REAL (G16)");
+  // Phase 5 recorded this as a non-port on the grounds that the repaint checks
+  // "already exercise the effect of" the watcher. They do not: __ffh_repaint()
+  // is paint() alone. The watcher's tick (pipeline.js:566-602) RELOADS every
+  // league - new byId, new player objects - and must re-attach usage, market,
+  // FantasyCalc, rest-of-season, waivers and the recap by hand, and its own
+  // comment says what missing one costs: the layer "vanishes from the page at
+  // the first kickoff of the afternoon and never returns". No layer of this
+  // project's tests ran that path. It costs one real 30-second tick.
+  {
+    // Find a starter who has NOT kicked off at the default Sunday clock, then
+    // put the clock 12 seconds before his kickoff, so the first tick (30s after
+    // boot) lands after it.
+    let kick = null, due = 0;
+    {
+      const { page, browser, server } = await open({ width: 1280, height: 900, hash: "#/joop/lineup" });
+      ({ kick, due } = await page.evaluate(() => {
+        const now = Date.now();
+        const ks = (window.__ffh_state?.leagues?.joop?.roster || [])
+          .filter((p) => !p.locked && p.game?.kickoffUTC)
+          .map((p) => Number(p.game.kickoffUTC)).filter((t) => t > now).sort((a, b) => a - b);
+        // Everyone in that slot locks together - four players share the
+        // fixture's 4:25 window.
+        return { kick: ks[0] ?? null, due: ks.filter((t) => t === ks[0]).length };
+      }));
+      await browser.close(); server.close();
+    }
+    ok("G16: the fixture has an unlocked starter with a kickoff still to come", kick !== null);
+    if (kick !== null) {
+      const { page, browser, server, errors } = await open({
+        width: 1280, height: 900, hash: "#/joop/lineup", sim: kick - 12000 });
+      const before = await page.evaluate(() => {
+        window.__g16 = { byId: window.__ffh_state?.leagues?.joop?.byId, topbar: document.querySelector(".topbar") };
+        const L = window.__ffh_state?.leagues?.joop;
+        const n = (f) => (L?.roster || []).filter(f).length;
+        return { locked: n((p) => p.locked), usage: n((p) => p.usage), market: n((p) => p.market),
+                 fcalc: n((p) => p.fcalc), ros: n((p) => p.ros), waivers: !!L?.waivers?.any,
+                 recap: !!L?.recap, lockIcons: document.querySelectorAll("[data-content] .nmark.lock").length };
+      });
+      await page.waitForTimeout(34000);
+      const after = await page.evaluate(() => {
+        const L = window.__ffh_state?.leagues?.joop;
+        const n = (f) => (L?.roster || []).filter(f).length;
+        return { locked: n((p) => p.locked), usage: n((p) => p.usage), market: n((p) => p.market),
+                 fcalc: n((p) => p.fcalc), ros: n((p) => p.ros), waivers: !!L?.waivers?.any,
+                 recap: !!L?.recap, lockIcons: document.querySelectorAll("[data-content] .nmark.lock").length,
+                 reloaded: window.__g16.byId !== L?.byId,
+                 sameTopbar: window.__g16.topbar === document.querySelector(".topbar") };
+      });
+      const d = `before ${JSON.stringify(before)}\n       after  ${JSON.stringify(after)}`;
+      ok("G16: THE WATCHER FIRED — the league was actually reloaded, not just repainted",
+        after.reloaded === true, d);
+      ok(`G16: exactly the ${due} players in that kickoff window are now locked, in state AND on the page`,
+        after.locked === before.locked + due && after.lockIcons === before.lockIcons + due, d);
+      // (`ros` is attached only to players a comparison has asked about, so it
+      // is zero on a fresh lineup and proves nothing here; Compare covers it.)
+      for (const k of ["usage", "market", "fcalc"]) {
+        ok(`G16: the ${k} layer was re-attached after the reload (${before[k]} players before)`,
+          before[k] > 0 && after[k] === before[k], d);
+      }
+      ok("G16: the wire and the recap were rebuilt, not dropped",
+        after.waivers === before.waivers && after.recap === before.recap && before.waivers, d);
+      ok("G16: the shell survived the re-solve", after.sameTopbar === true);
+      ok("G16: no page errors across the tick", errors.length === 0, errors.join("\n       "));
       await browser.close(); server.close();
     }
   }

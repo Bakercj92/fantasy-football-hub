@@ -39,10 +39,11 @@
   --c-bad:#F87171;
   /* Fills for the warn and bad pairs. Added in phase 5 for the injury chip,
      whose rule had to be re-expressed in tokens on the way over from the root
-     sheet. The VALUES are the literals `.tag.must` and `.tag.warn` already
-     carry verbatim, so nothing already measured moves a pixel; those two rules
-     are left pointing at their own copies deliberately, because collapsing
-     them is a refactor and this is a port. */
+     sheet. The VALUES are the literals `.tag.must` and `.tag.warn` carried
+     verbatim, so nothing already measured moved a pixel. Phase 5 left those
+     two rules on their own copies; the audit collapsed them onto these tokens
+     (Chris, 2026-10-29) so each fill lives in one place, and verified the
+     computed colours identical before and after. */
   --c-warn-fill:#3A2411;
   --c-bad-fill:#3A1515;
 
@@ -342,8 +343,8 @@ tr.dead .nm,tr.dead .pt{color:var(--c-dim)}
   padding:3px var(--sp2);border-radius:var(--r-sm);
   background:var(--c-raised);color:var(--c-mute);font-variant-numeric:tabular-nums}
 .tag.good{background:var(--c-act-fill);color:var(--c-act)}
-.tag.must{background:#3A1515;color:var(--c-bad)}
-.tag.warn{background:#3A2411;color:var(--c-warn)}
+.tag.must{background:var(--c-bad-fill);color:var(--c-bad)}
+.tag.warn{background:var(--c-warn-fill);color:var(--c-warn)}
 
 .tline.more .tl{color:var(--c-mute);font-size:var(--s2)}
 

@@ -43,6 +43,15 @@ Sleeper and FantasyCalc are served from `fixture.js`; the CSVs are served as
 the REAL bytes. Only the transport is local — the join, the Eastern-to-UTC
 conversion and the spreads all run against production data.
 
+## A green run is not proof the checks can see
+
+Phase 5's audit (2026-10-29) mutation-tested the checks themselves, not only the pages. That found
+eight checks that passed whatever the page did. The chip measurement and the phase 1 name-wrap probe
+were both looking for a name that has lived inside `.rowtog` since phase 3. The variable guard was
+reading computed styles, which never contain `var(`. Others were never shown that their knob had
+applied. The harness and the 52 mutations are in `test/mutation/`. **When you add a check here, add
+the mutation that should kill it there.**
+
 ## The fixture is hostile on purpose
 
 Chris's actual rosters exercise almost none of this: one locked player, no
