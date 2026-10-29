@@ -44,19 +44,51 @@ function chromePath() {
   return c[0];
 }
 
-async function open({ width, height, hash = "", usageOk = true, vacancyOk = true, scheduleOk = true }) {
+// PHASE 5 - THE KNOB SET, PORTED FROM harness.js.
+//
+// Every scenario family the old harness had and this file did not was blocked
+// on a missing PARAMETER, not a missing assertion: `SIM` was a module constant,
+// so until now every one of these checks ran on a Sunday at 13:40 and no other
+// day, against one usage payload, one vacancy payload and one week. The route
+// handlers below are lifted from `harness.js`'s `run()`, which had already paid
+// for the lessons recorded in their comments.
+//
+// EVERY DEFAULT REPRODUCES THE OLD BEHAVIOUR EXACTLY. 187 checks were measured
+// against the six-knob version, and a default that shifts by a hair
+// re-baselines all of them - which would hide more than any new scenario could
+// prove. The one deliberate change is that `vacPayload` is now built ONCE and
+// served to both routes, where before each route called `F.vacancyPayload()`
+// separately; the generator is deterministic so the bytes are identical, and a
+// single object is what stops the mirror and the vacancy layer drifting apart
+// about who the disagreeing player is.
+async function open({ width, height, hash = "", usageOk = true, vacancyOk = true,
+                      scheduleOk = true, sim = SIM, settle = 900,
+                      week = null, displayWeek = null, seedLog = null,
+                      usage = null, vacancy = null, upstreamUpdatedAt = null,
+                      defPts = null, trendingOk = true, noFaab = false }) {
   const server = await serve();
   const port = server.address().port;
   const exe = chromePath();
   const browser = await chromium.launch(exe ? { executablePath: exe } : {});
   const ctx = await browser.newContext({ viewport: { width, height }, timezoneId: "America/New_York" });
   await ctx.addInitScript(`{
-    const REAL = Date.now.bind(Date), T0 = REAL(), SIM = ${SIM};
+    const REAL = Date.now.bind(Date), T0 = REAL(), SIM = ${sim};
     const OD = Date;
     window.Date = class extends OD { constructor(...a){ super(...(a.length?a:[Date.now()])); } static now(){ return SIM + (REAL()-T0); } };
     Object.setPrototypeOf(window.Date, OD);
     Date.now = () => SIM + (REAL() - T0);
   }`);
+  // The decision log, written before any page script runs. Wrapped because
+  // this script also runs on about:blank, where localStorage throws.
+  //
+  // THE PAGE UNDER TEST NEVER WRITES HERE - `LOG_ENABLED = false` in
+  // pipeline.js - so seeding it is the only way to reach the graded layout,
+  // and a scenario that seeds it is testing a READER of this key, not a
+  // writer. See F.recapLog().
+  if (seedLog) {
+    await ctx.addInitScript(
+      `try{localStorage.setItem("ffh.decisions.v1", ${JSON.stringify(JSON.stringify(seedLog))});}catch(e){}`);
+  }
   const page = await ctx.newPage();
   const errors = [];
   page.on("pageerror", (e) => errors.push("pageerror: " + e.message));
@@ -65,10 +97,37 @@ async function open({ width, height, hash = "", usageOk = true, vacancyOk = true
   const dataHits = [];
   await page.route("**://api.sleeper.com/**", (route) => {
     const p = new URL(route.request().url()).pathname;
-    if (p === "/v1/state/nfl") return json(route, { season: F.SEASON, week: F.WEEK, display_week: F.WEEK });
-    if (p === "/v1/players/nfl/trending/add") { const r = F.riser(); return json(route, r ? [{ player_id: r, count: 8421 }] : []); }
+    if (p === "/v1/state/nfl") {
+      // DISPLAY_WEEK AND WEEK MUST BE SEPARATELY SETTABLE. Served identical,
+      // the one divergence that exists in the real payload - waiver night,
+      // when display_week still names the week just finished while week has
+      // advanced - is unreachable from here. Measured live 2026-10-06:
+      // display_week 4, week 5. pipeline.js:130-134 records what reading the
+      // wrong one did to the forward-looking half of the page.
+      const wk = week || F.WEEK;
+      return json(route, { season: F.SEASON, week: wk, display_week: displayWeek ?? wk });
+    }
+    if (p === "/v1/players/nfl/trending/add") {
+      if (!trendingOk) return route.abort("failed");
+      const r = F.riser(); return json(route, r ? [{ player_id: r, count: 8421 }] : []);
+    }
     let m = p.match(/^\/v1\/league\/(\d+)$/);
-    if (m) return json(route, { ...F.LEAGUES[m[1]], league_id: m[1] });
+    if (m) {
+      const L = F.LEAGUES[m[1]];
+      // A LOUD FAILURE, NOT A SPREAD OVER UNDEFINED. leagues.json is staged
+      // from the repo and this fixture is hand-written, so the two can
+      // disagree about which leagues the page loads - and `{...undefined}` is
+      // a legal empty object, so the page then comes up almost right.
+      if (!L) {
+        throw new Error(
+          `render fixture has no league ${m[1]} - leagues.json and fixture.js ` +
+          `disagree about which leagues this page loads.`);
+      }
+      // A league with no FAAB budget at all. The wire renders the figure, so
+      // its absence is a branch, not a missing number.
+      const settings = noFaab ? { playoff_week_start: 15 } : L.settings;
+      return json(route, { ...L, settings, league_id: m[1] });
+    }
     m = p.match(/^\/v1\/league\/(\d+)\/rosters$/);
     if (m) {
       const S = { "1389373222666932224": F.starters14, "1393723474328981504": F.starters8,
@@ -76,23 +135,42 @@ async function open({ width, height, hash = "", usageOk = true, vacancyOk = true
       return json(route, F.rostersFor(m[1], S[m[1]] || F.starters14));
     }
     if (/^\/projections\/nfl\/player\/(.+)$/.test(p)) return json(route, F.seasonWeeks(p.split("/").pop()));
-    if (/^\/projections\/nfl\/\d+\/\d+$/.test(p)) return json(route, F.universe);
+    if (/^\/projections\/nfl\/\d+\/\d+$/.test(p)) {
+      // EVERY DEFENCE IN THE FIXTURE PROJECTS IDENTICALLY, which makes the
+      // standing-defence row a permanent dead heat and leaves its interesting
+      // states unreachable. `defPts` rewrites sacks for named clubs, and a sack
+      // is worth exactly 1 at this fixture's scoring while pts_allow is worth
+      // 0, so the number asked for is the number projected.
+      if (!defPts) return json(route, F.universe);
+      return json(route, F.universe.map((e) => (
+        e.player?.position === "DEF" && defPts[e.team] != null
+          ? { ...e, stats: { ...e.stats, sack: defPts[e.team] } }
+          : e)));
+    }
     return json(route, []);
   });
   await page.route("**/leagues.json", (route) => { dataHits.push(route.request().url()); route.continue(); });
+  const vacPayload = vacancy || F.vacancyPayload();
   await page.route("**/data/usage_*.json", (route) => {
     dataHits.push(route.request().url());
     if (!usageOk) return route.fulfill({ status: 404, body: "not found" });
-    const base = F.usagePayload(), extra = F.vacancyPayload().__usage || {};
+    const base = usage || F.usagePayload();
+    // The vacancy fixture carries the usage rows its cross-check needs, merged
+    // here rather than duplicated, so the two cannot drift apart about who the
+    // disagreeing player is.
+    const extra = vacPayload.__usage || {};
     return json(route, Object.keys(extra).length ? { ...base, p: { ...base.p, ...extra } } : base);
   });
   await page.route("**/data/vacancy_*.json", (route) => {
     dataHits.push(route.request().url());
     if (!vacancyOk) return route.fulfill({ status: 404, body: "not found" });
-    return json(route, F.vacancyPayload());
+    return json(route, vacPayload);
   });
+  // api.github.com IS browser-readable cross-origin, which is the whole reason
+  // the staleness check can exist when the asset bytes cannot be fetched.
   await page.route("**://api.github.com/**", (route) => json(route, {
-    assets: [{ name: `stats_player_week_${F.SEASON}.csv`, updated_at: "2026-09-15T09:00:00Z" }] }));
+    assets: [{ name: `stats_player_week_${F.SEASON}.csv`,
+               updated_at: upstreamUpdatedAt || "2026-09-15T09:00:00Z" }] }));
   await page.route("**://api.fantasycalc.com/**", (route) => {
     const q = new URL(route.request().url()).searchParams;
     return json(route, F.fcalc(Number(q.get("numQbs")) || 1));
@@ -107,7 +185,7 @@ async function open({ width, height, hash = "", usageOk = true, vacancyOk = true
   });
 
   await page.goto(`http://127.0.0.1:${port}/v2/${hash}`, { waitUntil: "networkidle" });
-  await page.waitForTimeout(900);
+  await page.waitForTimeout(settle);
   return { page, browser, server, errors, dataHits };
 }
 
@@ -1027,6 +1105,813 @@ const ok = (name, cond, detail = "") => {
       `scroll-margin-top ${m.scrollMargin}px`);
     ok(`${w}px: no page errors`, errors.length === 0, errors.join("\n       "));
     await browser.close(); server.close();
+  }
+
+  // =========================================================================
+  // PHASE 5 — the rubric port.
+  //
+  // Everything below exists because the old harness proved it and this file
+  // could not: not for want of an assertion, but for want of a knob. See
+  // claude/hub-redesign-phase5-rubric-diff.md for the scenario-by-scenario
+  // verdicts, including the four gaps recorded as deliberate non-ports.
+  // =========================================================================
+
+  // A DELIBERATE 404 IS NOT A DEFECT. `usageOk:false` and `vacancyOk:false`
+  // fulfil the request with a 404, which Chromium logs as a console error - so
+  // asserting "no errors" in a scenario whose entire point is a missing layer
+  // asserts that the scenario did not happen. Caught on the first run of this
+  // block: two outage scenarios failed their own no-errors check. Only the
+  // deliberate status line is dropped; a pageerror or any other console error
+  // still fails.
+  const notThe404 = (es) => es.filter((e) => !/404 \(Not Found\)/.test(e));
+
+  // Days of the simulated week. 2026-09-13 is a Sunday in America/New_York,
+  // verified rather than assumed - the whole day matrix hangs off it.
+  const D_SUN = Date.UTC(2026, 8, 13, 17, 40, 0);
+  const D_MON = Date.UTC(2026, 8, 14, 14, 0, 0);
+  const D_TUE = Date.UTC(2026, 8, 15, 14, 0, 0);
+  const D_WED = Date.UTC(2026, 8, 16, 14, 0, 0);
+  const D_THU = Date.UTC(2026, 8, 17, 14, 0, 0);
+
+  console.log("\nPHASE 5 — THE GRADED RECAP (G3)");
+  {
+    const { page, browser, server, errors } = await open({
+      width: 1100, height: 1200, hash: "#/joop/recap",
+      week: 4, seedLog: F.recapLog(), usage: F.usageForRecap() });
+    ok("no page errors", errors.length === 0, errors.join("\n       "));
+
+    const r = await page.evaluate(() => {
+      const c = document.querySelector("[data-content]");
+      const tagOf = (id) => {
+        const body = document.getElementById(id);
+        if (!body) return null;
+        const t = body.closest(".disc")?.querySelector(".tag");
+        if (!t) return null;
+        const cs = getComputedStyle(t);
+        return { cls: t.className, text: t.textContent.trim(),
+                 color: cs.color, bg: cs.backgroundColor, weight: cs.fontWeight };
+      };
+      return {
+        title: document.querySelector("[data-title]")?.textContent,
+        discs: c.querySelectorAll(".disc").length,
+        ids: [...c.querySelectorAll(".discbody")].map((d) => d.id),
+        totals: c.querySelector("h2 .ct")?.textContent.replace(/\s+/g, " ").trim(),
+        heads: [...c.querySelectorAll(".disc .dl")].map((d) => d.textContent.replace(/\s+/g, " ").trim()),
+        note: [...c.querySelectorAll(".note")].map((d) => d.textContent.replace(/\s+/g, " ").trim()).join(" "),
+        tags: { l1: tagOf("rc-l-1"), l2: tagOf("rc-l-2"), l3: tagOf("rc-l-3"),
+                k1: tagOf("rc-k-1"), k3: tagOf("rc-k-3") },
+        body: c.textContent.replace(/\s+/g, " "),
+      };
+    });
+
+    ok("Recap is titled", r.title === "Recap", `got "${r.title}"`);
+    // THE EMPTY STATE IS NOT WHAT THIS SCENARIO IS FOR. If the seed failed to
+    // land, recapPage renders "Nothing graded yet" and every text assertion
+    // below would quietly be testing the wrong layout - the apply-failure
+    // lesson from the phase 4 audit, applied to a fixture.
+    ok("THE SEED LANDED — this is the GRADED layout, not the empty state",
+      !/Nothing graded yet/.test(r.body) && r.discs === 5,
+      `${r.discs} rows: ${r.ids.join(",")}`);
+    ok("...with the five panel ids the page derives from the week",
+      ["rc-l-1", "rc-l-2", "rc-l-3", "rc-k-1", "rc-k-3"].every((i) => r.ids.includes(i)),
+      r.ids.join(","));
+    ok("every disclosure id is unique", new Set(r.ids).size === r.ids.length, r.ids.join(","));
+    // A LINEUP ROW AND A LOCKOUT ROW IN THE SAME WEEK MUST NOT COLLIDE. Both
+    // ids are built from the week alone plus a one-letter prefix, so dropping
+    // either prefix makes week 3 emit the same id twice - and setContent's
+    // restore keys on that id, so it would reopen the wrong row.
+    ok("the two week-3 rows carry DIFFERENT ids despite sharing a week",
+      r.ids.includes("rc-l-3") && r.ids.includes("rc-k-3"), r.ids.join(","));
+
+    // THREE VERDICT STATES. A tie is its own, because `heldUp` is `delta <= 0`
+    // and at exactly level the head and the body can disagree - which is what
+    // the phase 4 audit caught.
+    ok("a week his own lineup won says so",
+      r.heads.some((h) => /your lineup held up/.test(h)), r.heads.join(" | "));
+    ok("a week the suggestion won says so",
+      r.heads.some((h) => /the suggested lineup would have scored more/.test(h)), r.heads.join(" | "));
+    ok("A DEAD LEVEL WEEK IS ITS OWN THIRD STATE",
+      r.heads.some((h) => /the two lineups scored the same/.test(h)), r.heads.join(" | "));
+
+    // THE SURVIVING PHASE 4 MUTATION, NOW RENDERED. netLocked is exactly 0
+    // here, which is the common case, and `!r.netLocked` dropped the entire
+    // total while the footnote below still promised two.
+    ok("TWO TOTALS, and a lockout total of exactly ZERO still renders",
+      /calls -8\.0 pts across 3 wk/.test(r.totals || "") && /locked out \+0\.0/.test(r.totals || ""),
+      `.ct read: ${r.totals}`);
+
+    // The tags, COMPUTED. Node can prove the class is emitted; only a browser
+    // can prove the three states look different from one another.
+    const t = r.tags;
+    ok("`.tag.good` is emitted on the week he won", /\bgood\b/.test(t.l1?.cls || ""), t.l1?.cls);
+    ok("`.tag.unmeasured` is emitted on the tie", /\bunmeasured\b/.test(t.l3?.cls || ""), t.l3?.cls);
+    ok("the week the suggestion won carries a PLAIN tag",
+      t.l2 && !/\bgood\b|\bunmeasured\b/.test(t.l2.cls), t.l2?.cls);
+    ok("THE THREE TAG STATES COMPUTE TO THREE DIFFERENT COLOURS",
+      t.l1 && t.l2 && t.l3 && new Set([t.l1.color, t.l2.color, t.l3.color]).size === 3,
+      `good=${t.l1?.color} plain=${t.l2?.color} unmeasured=${t.l3?.color}`);
+    ok("...and the good tag is filled, not merely recoloured",
+      t.l1 && t.l1.bg !== t.l2.bg, `good bg=${t.l1?.bg} plain bg=${t.l2?.bg}`);
+    ok("a lockout that cost exactly nothing shows a NUMBER, not a dash",
+      t.k3 && t.k3.text === "+0.0" && !/unmeasured/.test(t.k3.cls), JSON.stringify(t.k3));
+    ok("a lockout that could not be measured shows an em dash, quietly",
+      t.k1 && t.k1.text === "—" && /\bunmeasured\b/.test(t.k1.cls), JSON.stringify(t.k1));
+    ok("the footnote counts the partial weeks it excluded",
+      /2 weeks are still partly\s*unpublished and excluded from the totals/.test(r.note.replace(/\s+/g, " ")),
+      r.note.slice(0, 220));
+    ok("no placeholder leaked into the graded page",
+      !/\bundefined\b|\bNaN\b|\[object Object\]/.test(r.body), r.body.slice(0, 200));
+
+    await page.screenshot({ path: path.join(SHOTS, "v2-recap-graded.png"), fullPage: true });
+
+    // The disclosure, opened for real, and its body read back.
+    const opened = await page.evaluate(() => {
+      const b = document.querySelector('[aria-controls="rc-l-2"]');
+      b.click();
+      const p = document.getElementById("rc-l-2");
+      return { open: !p.hidden, len: p.textContent.replace(/\s+/g, " ").trim().length,
+               partial: /Only 50% of those players have\s*published stats yet/.test(
+                 p.textContent.replace(/\s+/g, " ")),
+               text: p.textContent.replace(/\s+/g, " ").trim().slice(0, 150) };
+    });
+    ok("A GRADED WEEK OPENS", opened.open === true);
+    ok("...and the panel is not empty", opened.len > 80, `${opened.len} chars`);
+    ok("...and a partially published week says so inside it, with its coverage",
+      opened.partial === true, opened.text);
+
+    // setContent's restore keys on the panel id (shell.js:225-231), so this is
+    // the check that the week-derived id is stable across the 30-second
+    // re-solve - the kickoff watcher repaints straight through a Tuesday.
+    await page.evaluate(() => window.__ffh_repaint());
+    await page.waitForTimeout(220);
+    const survived = await page.evaluate(() => {
+      const p = document.getElementById("rc-l-2");
+      return { exists: !!p, open: p ? !p.hidden : false,
+               expanded: document.querySelector('[aria-controls="rc-l-2"]')?.getAttribute("aria-expanded"),
+               stillFive: document.querySelectorAll("[data-content] .disc").length };
+    });
+    ok("THE rc-l-2 PANEL SURVIVES setContent'S RESTORE ACROSS A REPAINT",
+      survived.exists && survived.open === true && survived.expanded === "true",
+      JSON.stringify(survived));
+    ok("...and the repaint did not drop or duplicate a row",
+      survived.stillFive === 5, `${survived.stillFive} rows after repaint`);
+    await browser.close(); server.close();
+  }
+
+  // The graded layout at width. Constraint 3, and the failure class that has
+  // bitten this project three times.
+  console.log("\nPHASE 5 — THE GRADED RECAP AT WIDTH (G3)");
+  for (const w of [320, 360, 390, 560, 768, 820, 1100, 1440]) {
+    const { page, browser, server, errors } = await open({
+      width: w, height: 1000, hash: "#/joop/recap",
+      week: 4, seedLog: F.recapLog(), usage: F.usageForRecap() });
+    const m = await page.evaluate(() => {
+      const doc = document.documentElement;
+      // Open every row: a collapsed page cannot overflow, so measuring it
+      // closed would pass at every width and prove nothing.
+      for (const b of document.querySelectorAll("[data-content] .dischd")) b.click();
+      const tags = [...document.querySelectorAll("[data-content] .disc .tag")];
+      return {
+        graded: !/Nothing graded yet/.test(document.querySelector("[data-content]").textContent),
+        overflow: doc.scrollWidth - doc.clientWidth,
+        rows: document.querySelectorAll("[data-content] .disc").length,
+        // A tag is a short pill with a signed number in it; if it wraps, the
+        // head has run out of room and the layout is broken, not tight.
+        tagRects: Math.max(0, ...tags.map((t) => t.getClientRects().length)),
+        tap: Math.min(...[...document.querySelectorAll("[data-content] .dischd")]
+          .map((b) => Math.round(b.getBoundingClientRect().height))),
+      };
+    });
+    ok(`${w}px: the graded layout rendered`, m.graded === true && m.rows === 5, `${m.rows} rows`);
+    ok(`${w}px: the graded Recap does not scroll sideways, every row open`,
+      m.overflow <= 1, `overflowing by ${m.overflow}px`);
+    ok(`${w}px: a verdict tag does not wrap`, m.tagRects === 1, `${m.tagRects} client rects`);
+    ok(`${w}px: a graded row is a thumb-sized tap target`, m.tap >= 40, `${m.tap}px`);
+    ok(`${w}px: no page errors`, errors.length === 0, errors.join("\n       "));
+    if ([390, 1100].includes(w)) {
+      await page.screenshot({ path: path.join(SHOTS, `v2-recap-graded-${w}.png`), fullPage: true });
+    }
+    await browser.close(); server.close();
+  }
+
+  console.log("\nPHASE 5 — THE DAY MATRIX (G1)");
+  // Until now every check in this file ran on a Sunday at 13:40, because SIM
+  // was a constant. The Recap nav gate is the one day-dependent piece of
+  // chrome (router.js RECAP_NAV_DAYS = Tue, Wed) and the soft gate means the
+  // URL stays reachable on the other five days.
+  for (const d of [
+    { label: "Sunday", sim: D_SUN, day: 0, inNav: false },
+    { label: "Monday", sim: D_MON, day: 1, inNav: false },
+    { label: "Tuesday", sim: D_TUE, day: 2, inNav: true },
+    { label: "Wednesday", sim: D_WED, day: 3, inNav: true },
+    { label: "Thursday", sim: D_THU, day: 4, inNav: false },
+  ]) {
+    const { page, browser, server, errors } = await open({
+      width: 1280, height: 1000, hash: "#/today", sim: d.sim });
+    const r = await page.evaluate(() => {
+      const navs = [...document.querySelectorAll(".railbtn")];
+      const classes = [...document.querySelectorAll(".clsx")];
+      return {
+        // THE SHIMMED CLOCK, READ THE WAY THE PAGE READS IT. `state.day` is an
+        // optional INJECTION point (pages.js:111, router.js:44 both spell it
+        // `state.day ?? new Date().getDay()`) and nothing sets it in normal
+        // operation, so probing it returned undefined on all five days and the
+        // check failed while the knob was working perfectly - the nav gate
+        // below already differed between Sunday and Tuesday. Corrected to read
+        // the Date the page actually sees.
+        day: new Date().getDay(),
+        recapHidden: navs.filter((b) => b.dataset.nav === "recap").every((b) => b.hasAttribute("hidden")),
+        shown: navs.filter((b) => !b.hasAttribute("hidden")).map((b) => b.dataset.nav),
+        classCount: classes.length,
+        labels: classes.map((s) => s.querySelector(".clsh")?.textContent.replace(/\s+/g, " ").trim().slice(0, 40)),
+        // The advisory class is a <details> and must be the LAST thing on the
+        // page on every day, whatever the week's shape.
+        lastIsAdvisory: classes.length > 0 && classes[classes.length - 1].tagName === "DETAILS",
+      };
+    });
+    // THE KNOB HAS TO HAVE APPLIED. A clock shim that silently does nothing
+    // makes all five of these scenarios one scenario, five times - and the
+    // phase 4 audit's own lesson is that a mutation which fails to apply is
+    // not a mutation that died.
+    ok(`${d.label}: the simulated clock actually moved the day`,
+      r.day === d.day, `page thinks getDay() is ${r.day}, expected ${d.day}`);
+    ok(`${d.label}: Recap is ${d.inNav ? "offered" : "out of"} the nav`,
+      r.recapHidden === !d.inNav, `hidden=${r.recapHidden}, nav shows ${r.shown.join(",")}`);
+    ok(`${d.label}: Today still has something to say`, r.classCount > 0, r.labels.join(" | "));
+    ok(`${d.label}: the advisory class is last on the page`, r.lastIsAdvisory === true,
+      r.labels.join(" | "));
+    ok(`${d.label}: no page errors`, errors.length === 0, errors.join("\n       "));
+    await browser.close(); server.close();
+  }
+  // The soft gate, proved on a day the tab is gone rather than only on Sunday.
+  {
+    const { page, browser, server } = await open({
+      width: 1280, height: 900, hash: "#/joop/recap", sim: D_THU });
+    const r = await page.evaluate(() => ({
+      title: document.querySelector("[data-title]")?.textContent,
+      standingOnItAndVisible: [...document.querySelectorAll(".railbtn")]
+        .filter((b) => b.dataset.nav === "recap").every((b) => !b.hasAttribute("hidden")),
+    }));
+    ok("SOFT GATE: Recap is still reachable by URL on a Thursday",
+      r.title === "Recap", `got "${r.title}"`);
+    ok("...and the tab un-hides itself while you are standing on it",
+      r.standingOnItAndVisible === true);
+    await browser.close(); server.close();
+  }
+
+  console.log("\nPHASE 5 — THE WAIVER-NIGHT WEEK (G2)");
+  // Measured live on 2026-10-06: display_week 4 while week 5 had advanced.
+  // pipeline.js:130-134 records that reading display_week here priced the
+  // entire forward-looking half of the page against a finished week. Nothing
+  // in this file could reach the divergence until the knob existed.
+  for (const w of [1280, 390]) {
+    const { page, browser, server, errors } = await open({
+      width: w, height: 1000, hash: "#/joop/lineup", sim: D_TUE,
+      week: 5, displayWeek: 4 });
+    const r = await page.evaluate(() => ({
+      stamp: document.querySelector(".wk")?.textContent.replace(/\s+/g, " ").trim(),
+      week: window.__ffh_state?.week,
+      graded: window.__ffh_state?.gradedWeek,
+      overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+    }));
+    ok(`${w}px: THE PAGE PRICES THE ADVANCED WEEK, not the one display_week names`,
+      r.week === 5, `state.week=${r.week}`);
+    ok(`${w}px: ...and still knows which week is the graded one`,
+      r.graded === 4, `state.gradedWeek=${r.graded}`);
+    ok(`${w}px: THE HEADER NAMES BOTH WEEKS SEPARATELY`,
+      /Week 5/.test(r.stamp || "") && /wk 4 graded/.test(r.stamp || ""),
+      `stamp read: "${r.stamp}"`);
+    ok(`${w}px: the two-week stamp does not push the topbar sideways`,
+      r.overflow <= 1, `overflowing by ${r.overflow}px`);
+    ok(`${w}px: no page errors`, errors.length === 0, errors.join("\n       "));
+    await browser.close(); server.close();
+  }
+  // And the ordinary case must NOT grow a second week.
+  {
+    const { page, browser, server } = await open({
+      width: 1280, height: 900, hash: "#/joop/lineup", sim: D_TUE, week: 5 });
+    const stamp = await page.evaluate(() =>
+      document.querySelector(".wk")?.textContent.replace(/\s+/g, " ").trim());
+    ok("with no divergence the header says ONE week, not 'wk 5 graded'",
+      /Week 5/.test(stamp || "") && !/graded/.test(stamp || ""), `stamp read: "${stamp}"`);
+    await browser.close(); server.close();
+  }
+
+  console.log("\nPHASE 5 — THE REST OF THE STATUS STRIP (G4, G6)");
+  // The snap-counts warning. Restored in phase 4 after the phase 1 footer
+  // split dropped it; node covers the copy and nothing rendered it. It is the
+  // only place on the site that distinguishes missing data from a measured
+  // zero, and it fires UNDER a fresh overall stamp, which is the trap.
+  {
+    const { page, browser, server, errors } = await open({
+      width: 1280, height: 900, hash: "#/joop/lineup",
+      usage: { ...F.usagePayload(),
+               sources: { stats_player: { ok: true, rows: 900 },
+                          snap_counts: { ok: false, rows: 0 } } } });
+    const s = await page.evaluate(() => {
+      const d = document.querySelector(".status");
+      return { summary: d?.querySelector("summary")?.textContent.replace(/\s+/g, " ").trim(),
+               text: (d?.textContent || "").replace(/\s+/g, " "),
+               cls: d?.className || "" };
+    });
+    ok("THE SNAP-COUNTS WARNING RENDERS", /Snap counts did not publish for this build/.test(s.text),
+      s.text.slice(0, 220));
+    ok("...and says plainly that blank is missing data, not zero snaps",
+      /missing data, not zero snaps/.test(s.text));
+    // NOT "the summary names snaps". status.js:129 only promotes that sentence
+    // when snaps is the FIRST loud row, and this fixture always carries a
+    // louder one - the unrecognised team ZZZ - so the summary correctly reads
+    // "2 things worth knowing about this load". Asserting the sentence made
+    // this check a test of the fixture's sort order. What matters is that the
+    // reader cannot miss it and that it has not replaced the stamp.
+    ok("...and the strip is FLAGGED, so it is visible without expanding",
+      /has-(warn|bad)/.test(s.cls || ""), `class: ${s.cls}`);
+    ok("...and the warning sits OVER A FRESH MIRROR STAMP, which is the trap",
+      /Usage through week 3/.test(s.text) && /Snap counts did not publish/.test(s.text),
+      s.text.slice(0, 260));
+    ok("...while the mirror itself is NOT reported as missing",
+      !/No usage layer this load/.test(s.text));
+    ok("no page errors", errors.length === 0, errors.join("\n       "));
+    await browser.close(); server.close();
+  }
+  // Clubs that have not filed: named while a reader can hold them in their
+  // head (NAME_CLUBS_UPTO = 4), counted past that. Two different sentences
+  // and two live shapes - 2026-10-13's missing Monday-night game, and a
+  // Thursday night where through_week has flipped with thirty clubs to play.
+  {
+    const { page, browser, server } = await open({
+      width: 1280, height: 900, hash: "#/joop/lineup",
+      usage: F.usagePayload({ shortClubs: ["KC", "CIN"] }) });
+    const t = await page.evaluate(() =>
+      document.querySelector(".status")?.textContent.replace(/\s+/g, " ") || "");
+    ok("two unfiled clubs are NAMED", /KC and CIN|CIN and KC/.test(t), t.slice(0, 220));
+    ok("...and the sentence agrees with itself about number", /have not filed week 3/.test(t),
+      t.slice(0, 220));
+    await browser.close(); server.close();
+  }
+  {
+    const THIRTY = ["ARI","ATL","BAL","BUF","CAR","CHI","CIN","CLE","DAL","DEN","DET","GB",
+                    "HOU","IND","JAX","KC","LA","LAC","LV","MIA","MIN","NE","NO","NYG",
+                    "NYJ","PIT","SEA","SF","TB","TEN"];
+    const { page, browser, server } = await open({
+      width: 1280, height: 900, hash: "#/joop/lineup",
+      usage: F.usagePayload({ shortClubs: THIRTY }) });
+    const t = await page.evaluate(() =>
+      document.querySelector(".status")?.textContent.replace(/\s+/g, " ") || "");
+    ok("thirty unfiled clubs are COUNTED, because naming them is not a sentence",
+      /30 clubs have not filed/.test(t), t.slice(0, 220));
+    ok("...and not one of them is named", !/ARI, ATL/.test(t), t.slice(0, 220));
+    await browser.close(); server.close();
+  }
+
+  console.log("\nPHASE 5 — THE SIGNAL DISAGREEMENT (G7)");
+  // Six states, opposite in meaning and identical in shape. Each drops the
+  // LAST mirrored week from a rostered starter - which is what "projected to
+  // play, did not play" looks like in the data - and then varies only what the
+  // depth chart says about him. The old harness's own comment records why
+  // these cannot be one scenario.
+  const QB = F.H.qb1;
+  const dropLastWeek = (id) => {
+    const u = F.usagePayload();
+    u.p[id] = { ...u.p[id], w: u.p[id].w.filter((r) => r[0] !== 3), a: { ...u.p[id].a } };
+    delete u.p[id].a["3"];
+    return u;
+  };
+  const vacWith = ({ depth = {}, absent = [] }) => {
+    const v = F.vacancyPayload();
+    return { ...v, depth: { ...v.depth, ...depth }, absent: [...(v.absent || []), ...absent] };
+  };
+  const SIG_STARTER = vacWith({
+    depth: { [QB]: { tm: "CIN", pos: "QB", rk: 1, climb: 0, nm: "Starting Quarterback" },
+             "sig-backup": { tm: "CIN", pos: "QB", rk: 2, climb: 0, nm: "The Understudy" } },
+    absent: [{ id: QB, wk: 1, nm: "Starting Quarterback", tm: "CIN", pos: "QB",
+               st: "Out", inj: "Concussion", tier: "confirmed" }],
+  });
+  const SIG_RULEDOUT = vacWith({
+    depth: { [QB]: { tm: "CIN", pos: "QB", rk: 1, climb: 0, nm: "Starting Quarterback" } },
+    absent: [{ id: QB, wk: 2, nm: "Starting Quarterback", tm: "CIN", pos: "QB",
+               st: "Out", inj: "Hamstring", tier: "confirmed" }],
+  });
+  const SIG_BACKUP = vacWith({
+    depth: { [QB]: { tm: "CIN", pos: "QB", rk: 2, climb: 0, nm: "Starting Quarterback" },
+             "sig-ahead": { tm: "CIN", pos: "QB", rk: 1, climb: 0, nm: "The Actual Starter" } },
+  });
+
+  const sigRead = () => {
+    const card = [...document.querySelectorAll("[data-content] .card")]
+      .find((c) => /Worth a second look/.test(c.querySelector("h2")?.textContent || ""));
+    if (!card) return { present: false };
+    return {
+      present: true,
+      count: card.querySelectorAll(".srow2").length,
+      lines: [...card.querySelectorAll(".srow2 .dl")].map((d) => d.textContent.replace(/\s+/g, " ").trim()),
+      notes: [...card.querySelectorAll(".srow2 .note")].map((d) => d.textContent.replace(/\s+/g, " ").trim()),
+      chips: [...card.closest("[data-content]").querySelectorAll(".nm .chip")]
+        .map((c) => `${c.textContent.trim()}|${c.getAttribute("title") || ""}`),
+      text: card.textContent.replace(/\s+/g, " ").trim(),
+    };
+  };
+
+  const sigStates = [];
+  for (const sc of [
+    { label: "the chart says he is back", vacancy: SIG_STARTER, expect: /QB1 on CIN's depth chart/ },
+    { label: "ruled out again this week", vacancy: SIG_RULEDOUT, expect: /Out \(Hamstring\) for week/ },
+    { label: "genuinely a backup", vacancy: SIG_BACKUP, expect: /QB2 on CIN's depth chart/ },
+    { label: "no depth entry at all — the question stays open", vacancy: null,
+      expect: /returning starter or backup\?/ },
+    { label: "no vacancy layer at all", vacancyOk: false, expect: /returning starter or backup\?/ },
+  ]) {
+    const { page, browser, server, errors } = await open({
+      width: 1280, height: 1100, hash: "#/joop/lineup",
+      usage: dropLastWeek(QB),
+      ...(sc.vacancy ? { vacancy: sc.vacancy } : {}),
+      ...(sc.vacancyOk === false ? { vacancyOk: false } : {}) });
+    const r = await page.evaluate(sigRead);
+    sigStates.push({ label: sc.label, text: r.text || "" });
+    ok(`SIGNALS, ${sc.label}: the block renders`, r.present === true,
+      "no card headed 'Worth a second look'");
+    ok(`SIGNALS, ${sc.label}: it names the absence as a measured fact`,
+      /did not play in week/.test(r.text || ""), (r.text || "").slice(0, 200));
+    ok(`SIGNALS, ${sc.label}: and says what the chart does or does not settle`,
+      sc.expect.test(r.text || ""), (r.text || "").slice(0, 240));
+    ok(`SIGNALS, ${sc.label}: no placeholder in any sentence`,
+      !/\bundefined\b|\bNaN\b|\[object Object\]/.test(r.text || ""), (r.text || "").slice(0, 200));
+    ok(`SIGNALS, ${sc.label}: no page errors beyond the deliberate outage`,
+      notThe404(errors).length === 0, notThe404(errors).join("\n       "));
+    if (sc.vacancy === SIG_STARTER) {
+      await page.screenshot({ path: path.join(SHOTS, "v2-signals-back.png"), fullPage: true });
+    }
+    await browser.close(); server.close();
+  }
+  // THE META-ASSERTION. The vacancy scenarios once shipped as two labels over
+  // one rendering, and the whole reason these five are separate is that they
+  // are supposed to SAY different things. Four distinct renderings from five
+  // scenarios is the honest expectation: "no depth entry" and "no vacancy
+  // layer" reach the same open question by different routes.
+  ok("THE FIVE SIGNAL STATES ARE NOT ALL THE SAME RENDERING",
+    new Set(sigStates.map((s) => s.text)).size >= 4,
+    sigStates.map((s) => `${s.label} -> ${s.text.slice(0, 60)}`).join("\n       "));
+  // Genuine silence: with no mirror there is nothing to disagree WITH.
+  {
+    const { page, browser, server } = await open({
+      width: 1280, height: 900, hash: "#/joop/lineup", usageOk: false });
+    const r = await page.evaluate(sigRead);
+    ok("SIGNALS: with no mirror at all the block is ABSENT, not empty",
+      r.present === false, "a 'Worth a second look' card rendered with no usage layer");
+    await browser.close(); server.close();
+  }
+  {
+    const { page, browser, server } = await open({
+      width: 390, height: 900, hash: "#/joop/lineup",
+      usage: dropLastWeek(QB), vacancy: SIG_STARTER });
+    const m = await page.evaluate(() => ({
+      overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+      present: !![...document.querySelectorAll("[data-content] .card h2")]
+        .find((h) => /Worth a second look/.test(h.textContent)),
+    }));
+    ok("SIGNALS on a phone: the block is there", m.present === true);
+    ok("SIGNALS on a phone: no horizontal scroll", m.overflow <= 1, `${m.overflow}px`);
+    await browser.close(); server.close();
+  }
+
+  console.log("\nPHASE 5 — THE VACANCY BLOCK (G8)");
+  // Captured as TEXT, deliberately. Nearly every field in this block is
+  // optional, so "the section exists" passes on a block reading "projected
+  // undefined but did not play in week undefined".
+  const vacRead = () => {
+    const card = [...document.querySelectorAll("[data-content] .card")]
+      .find((c) => /Just came free/.test(c.querySelector("h2")?.textContent || ""));
+    if (!card) return { present: false };
+    return {
+      present: true,
+      ct: card.querySelector("h2 .ct")?.textContent.replace(/\s+/g, " ").trim(),
+      heads: [...card.querySelectorAll(".disc .dl")].map((d) => d.textContent.replace(/\s+/g, " ").trim()),
+      subhd: [...card.querySelectorAll(".subhd")].map((h) => h.textContent.trim()),
+      note: card.querySelector(".note")?.textContent.replace(/\s+/g, " ").trim(),
+      text: card.textContent.replace(/\s+/g, " ").trim(),
+    };
+  };
+  for (const sc of [
+    { label: "a partially filed week carries the caveat", sim: D_WED, week: 4,
+      vacancy: F.vacancyPayload({ week: 2, teamsReported: 2 }),
+      must: /2 of 32|only 2/i, mustNot: null },
+    { label: "a fully reported week carries NO caveat", sim: D_WED, week: 4,
+      vacancy: F.vacancyPayload({ week: 2, teamsReported: 32 }),
+      must: /Depth chart as of/, mustNot: /of 32 clubs|only \d+ of/i },
+    { label: "the chart and the usage disagree, heir unprojected", sim: D_WED, week: 4,
+      vacancy: F.vacancyDisagree(),
+      must: /The chart and the usage disagree/, mustNot: null },
+  ]) {
+    const { page, browser, server, errors } = await open({
+      width: 1280, height: 1100, hash: "#/joop/wire",
+      sim: sc.sim, week: sc.week, vacancy: sc.vacancy });
+    const r = await page.evaluate(vacRead);
+    ok(`VACANCY, ${sc.label}: the block renders`, r.present === true,
+      "no card headed 'Just came free'");
+    ok(`VACANCY, ${sc.label}: it says the thing`, sc.must.test(r.text || ""),
+      (r.text || "").slice(0, 260));
+    if (sc.mustNot) {
+      ok(`VACANCY, ${sc.label}: and does not say the other thing`,
+        !sc.mustNot.test(r.text || ""), (r.text || "").slice(0, 260));
+    }
+    ok(`VACANCY, ${sc.label}: no placeholder in any sentence`,
+      !/\bundefined\b|\bNaN\b|\[object Object\]/.test(r.text || ""), (r.text || "").slice(0, 200));
+    ok(`VACANCY, ${sc.label}: the bid refusal is restated here too`,
+      /No bid figure here either/.test(r.text || ""), (r.text || "").slice(0, 200));
+    ok(`VACANCY, ${sc.label}: no page errors`, errors.length === 0, errors.join("\n       "));
+    await browser.close(); server.close();
+  }
+  // Silence, twice over, by two different routes.
+  {
+    const { page, browser, server } = await open({
+      width: 1280, height: 900, hash: "#/joop/wire", sim: D_WED, week: 4,
+      vacancy: F.vacancyEmpty() });
+    const r = await page.evaluate(vacRead);
+    const body = await page.evaluate(() =>
+      document.querySelector("[data-content]").textContent.replace(/\s+/g, " "));
+    ok("VACANCY with nothing to say: the block VANISHES rather than rendering a zero",
+      r.present === false, `rendered with ct "${r.ct}"`);
+    ok("...and the rest of the wire is still there", body.length > 200, `${body.length} chars`);
+    await browser.close(); server.close();
+  }
+  {
+    const { page, browser, server, errors } = await open({
+      width: 1280, height: 900, hash: "#/joop/wire", sim: D_WED, week: 4, vacancyOk: false });
+    const r = await page.evaluate(vacRead);
+    ok("VACANCY layer missing entirely: the block is absent and the page lives",
+      r.present === false && notThe404(errors).length === 0, notThe404(errors).join("\n       "));
+    await browser.close(); server.close();
+  }
+  {
+    const { page, browser, server } = await open({
+      width: 390, height: 900, hash: "#/joop/wire", sim: D_WED, week: 4,
+      vacancy: F.vacancyDisagree() });
+    const m = await page.evaluate(() => {
+      for (const b of document.querySelectorAll("[data-content] .dischd")) b.click();
+      return { overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+               present: !![...document.querySelectorAll("[data-content] .card h2")]
+                 .find((h) => /Just came free/.test(h.textContent)) };
+    });
+    ok("VACANCY on a phone: the block is there", m.present === true);
+    ok("VACANCY on a phone: no horizontal scroll with every row open",
+      m.overflow <= 1, `${m.overflow}px`);
+    await page.screenshot({ path: path.join(SHOTS, "v2-vacancy-phone.png"), fullPage: true });
+    await browser.close(); server.close();
+  }
+
+  console.log("\nPHASE 5 — THE STANDING DEFENCE (G9)");
+  // Every defence in the fixture projects identically, so without defPts this
+  // row is a permanent dead heat and its two interesting states were
+  // unreachable. KC is the rostered defence in every fixture lineup; BUF is
+  // free. The calm/actionable distinction is a CLASS, so a do-nothing row
+  // styled like a claim passes any text check.
+  for (const sc of [
+    { label: "the live 2026-10-06 leak (rostered 5.3, free 10.2)",
+      defPts: { KC: 5.3, BUF: 10.2 }, calm: false },
+    { label: "yours is better — quiet, and still shown",
+      defPts: { KC: 16.0 }, calm: true },
+  ]) {
+    const { page, browser, server, errors } = await open({
+      width: 1280, height: 1100, hash: "#/joop/wire", sim: D_WED, week: 5, defPts: sc.defPts });
+    const r = await page.evaluate(() => {
+      const body = document.getElementById("wdef");
+      const row = body?.closest(".disc");
+      if (!row) return { present: false };
+      const btn = row.querySelector(".dischd");
+      btn.click();
+      return {
+        present: true,
+        calm: row.classList.contains("calm"),
+        head: row.querySelector(".dl")?.textContent.replace(/\s+/g, " ").trim(),
+        tag: row.querySelector(".tag")?.textContent.trim(),
+        tagCls: row.querySelector(".tag")?.className,
+        why: document.getElementById("wdef")?.textContent.replace(/\s+/g, " ").trim(),
+      };
+    });
+    ok(`DEF, ${sc.label}: the standing seat is on the page`, r.present === true,
+      "no #wdef row rendered");
+    ok(`DEF, ${sc.label}: it reads as ${sc.calm ? "settled" : "something to do"}`,
+      r.calm === sc.calm, `calm=${r.calm}, head: ${r.head}`);
+    ok(`DEF, ${sc.label}: the reasoning is not empty`, (r.why || "").length > 40,
+      `${(r.why || "").length} chars`);
+    ok(`DEF, ${sc.label}: it says projection gap, never a matchup read`,
+      !/matchup/i.test(r.why || "") || /projection gap, not a matchup read/.test(r.why || ""),
+      (r.why || "").slice(0, 200));
+    ok(`DEF, ${sc.label}: no placeholder`,
+      !/\bundefined\b|\bNaN\b/.test(`${r.head} ${r.why}`), `${r.head} | ${(r.why || "").slice(0, 120)}`);
+    ok(`DEF, ${sc.label}: no page errors`, errors.length === 0, errors.join("\n       "));
+    await browser.close(); server.close();
+  }
+  {
+    const { page, browser, server } = await open({
+      width: 390, height: 900, hash: "#/joop/wire", sim: D_WED, week: 5,
+      defPts: { KC: 5.3, BUF: 10.2 } });
+    const m = await page.evaluate(() => {
+      document.querySelector('[aria-controls="wdef"]')?.click();
+      return { overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+               tap: Math.round(document.querySelector('[aria-controls="wdef"]')
+                 ?.getBoundingClientRect().height || 0) };
+    });
+    ok("DEF on a phone: no horizontal scroll with the row open", m.overflow <= 1, `${m.overflow}px`);
+    ok("DEF on a phone: the row is a thumb-sized tap target", m.tap >= 40, `${m.tap}px`);
+    await browser.close(); server.close();
+  }
+
+  console.log("\nPHASE 5 — CHOPPED (G12)");
+  // leagues.json has carried this league since 2026-10-06 and nothing ever
+  // PAINTED it. Nine slots rather than ten, no third receiver, no superflex,
+  // and a $1000 FAAB budget - which is the property worth having, because the
+  // wire renders the figure.
+  for (const w of [1280, 390]) {
+    const { page, browser, server, errors } = await open({
+      width: w, height: 1100, hash: "#/chop/lineup", sim: D_WED, week: 5 });
+    const r = await page.evaluate(() => ({
+      active: [...document.querySelectorAll("[data-league]")]
+        .find((b) => b.getAttribute("aria-current") === "true")?.dataset.league,
+      // STARTING slots only. The page renders bench rows in the same table,
+      // so counting every .slot compared 9 against 18 and the failure message
+      // printed the answer: QB,RB,RB,WR,WR,TE,FLEX,K,DEF,BN,BN,...
+      slots: [...document.querySelectorAll("[data-content] .prow .slot")]
+        .map((s) => s.textContent.trim()).filter((s) => !/^(BN|IR)$/.test(s)),
+      rows: document.querySelectorAll("[data-content] .prow:not(.empty)").length,
+      overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+      body: document.querySelector("[data-content]").textContent.replace(/\s+/g, " "),
+    }));
+    ok(`${w}px: CHOPPED PAINTS AT ALL`, r.active === "chop", `active league: ${r.active}`);
+    ok(`${w}px: nine starting slots, not Joop's ten`,
+      r.slots.length === 9, `${r.slots.length}: ${r.slots.join(",")}`);
+    ok(`${w}px: and no superflex seat`, !r.slots.some((s) => /super/i.test(s)), r.slots.join(","));
+    ok(`${w}px: no placeholder on a league nothing had ever rendered`,
+      !/\bundefined\b|\bNaN\b|\[object Object\]/.test(r.body), r.body.slice(0, 200));
+    ok(`${w}px: Chopped does not scroll sideways`, r.overflow <= 1, `${r.overflow}px`);
+    ok(`${w}px: no page errors`, errors.length === 0, errors.join("\n       "));
+    await browser.close(); server.close();
+  }
+  {
+    const { page, browser, server } = await open({
+      width: 1280, height: 1100, hash: "#/chop/wire", sim: D_WED, week: 5 });
+    const t = await page.evaluate(() =>
+      document.querySelector("[data-content]").textContent.replace(/\s+/g, " "));
+    // THE FIGURE IS WHAT IS LEFT, NOT THE BUDGET. The wire renders remaining
+    // FAAB - $977 here, from a $1000 budget with the fixture's $23 spent - and
+    // the first cut of this check asserted the budget itself and failed
+    // against correct output. Joop renders $77 from the same $23 spent, so the
+    // property worth asserting is that THIS league's budget is the one being
+    // read: a tenfold budget shows a tenfold figure, and Joop's never appears.
+    ok("CHOPPED reads its OWN budget — ten times Joop's, minus the same spend",
+      /\$9\d\d/.test(t) && !/\$77\b/.test(t),
+      (t.match(/\$[\d,]+/g) || []).join(" ") || "no dollar figure at all");
+    ok("...and the bid refusal still holds on a league with ten times the budget",
+      /No bid figure here/.test(t));
+    await browser.close(); server.close();
+  }
+  // A league with no FAAB budget at all is the other end of the same branch.
+  {
+    const { page, browser, server, errors } = await open({
+      width: 1280, height: 1100, hash: "#/joop/wire", sim: D_WED, week: 5, noFaab: true });
+    const t = await page.evaluate(() =>
+      document.querySelector("[data-content]").textContent.replace(/\s+/g, " "));
+    ok("a league with NO budget says nothing about FAAB rather than $undefined",
+      !/\bundefined\b|\$NaN/.test(t), t.slice(0, 200));
+    ok("...and the page still renders a wire", t.length > 200 && errors.length === 0,
+      errors.join("\n       "));
+    await browser.close(); server.close();
+  }
+
+  console.log("\nPHASE 5 — THE CHEAP GUARDS (G13, G14, G15)");
+  {
+    const { page, browser, server } = await open({
+      width: 1280, height: 1100, hash: "#/joop/lineup" });
+    // G13. A typo'd custom property renders TRANSPARENT rather than broken, so
+    // nothing else on this page catches it - and phase 5 came within one
+    // verbatim copy of shipping two: the root sheet's chip rule carries
+    // var(--warn) and var(--bad), neither of which exists in v2/app.css.
+    const vars = await page.evaluate(() => {
+      const bad = [];
+      for (const el of document.querySelectorAll("*")) {
+        const cs = getComputedStyle(el);
+        for (const prop of ["backgroundColor", "color", "borderTopColor", "fill"]) {
+          const v = cs[prop];
+          if (typeof v === "string" && v.includes("var(")) {
+            bad.push(`${el.className || el.tagName}.${prop}=${v}`);
+          }
+        }
+      }
+      return { bad: bad.slice(0, 8), count: bad.length,
+               bodyBg: getComputedStyle(document.body).backgroundColor };
+    });
+    ok("NO UNRESOLVED CUSTOM PROPERTY ANYWHERE ON THE PAGE",
+      vars.count === 0, `${vars.count}: ${vars.bad.join("; ")}`);
+    ok("...and the theme actually applied to the body",
+      vars.bodyBg !== "rgba(0, 0, 0, 0)" && vars.bodyBg !== "transparent", vars.bodyBg);
+
+    // G14. The injury chip. The class was emitted from phase 1 and this
+    // stylesheet carried no rule for it until phase 5, so these rendered as
+    // bare text on two shipped pages while Methods called it permanent.
+    const chips = await page.evaluate(() => {
+      const cs2 = [...document.querySelectorAll("[data-content] .chip")];
+      return cs2.map((c) => {
+        const s = getComputedStyle(c);
+        return { text: c.textContent.trim(), title: c.getAttribute("title") || "",
+                 bg: s.backgroundColor, radius: s.borderTopLeftRadius,
+                 padX: s.paddingLeft, rects: c.getClientRects().length };
+      });
+    });
+    ok("there ARE injury designations on this page to check", chips.length > 0,
+      "no .chip rendered at all");
+    ok("EVERY CHIP CARRIES ITS FULL STATUS AS A TITLE, not just the abbreviation",
+      chips.every((c) => c.title.length > 0 && c.title.length >= c.text.length),
+      JSON.stringify(chips.slice(0, 4)));
+    ok("THE CHIP RULE APPLIES — a filled, rounded, padded badge, not bare text",
+      chips.every((c) => c.bg !== "rgba(0, 0, 0, 0)" && parseFloat(c.radius) > 0
+                         && parseFloat(c.padX) > 0),
+      JSON.stringify(chips.slice(0, 4)));
+    ok("...and no chip wraps inside the cell it sits in",
+      chips.every((c) => c.rects === 1), JSON.stringify(chips.map((c) => c.rects)));
+    await browser.close(); server.close();
+  }
+  {
+    // G15. Inverting `.win` highlights the LOSER in every row, and it survived
+    // fifty mutations in phase 4 because node can only see that the class was
+    // emitted. Whether it computes to anything a reader can see is a browser
+    // question.
+    const { page, browser, server } = await open({
+      width: 1100, height: 900, hash: "#/joop/lineup" });
+    for (const _ of [0, 1]) {
+      await page.evaluate(() => {
+        const b = [...document.querySelectorAll('.prow:not(.dead) [data-cmp]:not([aria-pressed="true"])')][0];
+        if (b) b.click();
+      });
+      await page.waitForTimeout(120);
+    }
+    await page.evaluate(() => { location.hash = "#/joop/compare"; });
+    await page.waitForTimeout(350);
+    const w = await page.evaluate(() => {
+      const rows = [...document.querySelectorAll(".cmpt .mrow")];
+      const styleOf = (td) => {
+        const s = getComputedStyle(td);
+        return `${s.color}|${s.backgroundColor}|${s.fontWeight}`;
+      };
+      let winners = 0, rowsWithWin = 0, sameAsLoser = [];
+      for (const tr of rows) {
+        const cells = [...tr.querySelectorAll(".cv")];
+        const win = cells.filter((c) => c.classList.contains("win"));
+        const lose = cells.filter((c) => !c.classList.contains("win"));
+        if (!win.length || !lose.length) continue;
+        rowsWithWin += 1; winners += win.length;
+        if (styleOf(win[0]) === styleOf(lose[0])) {
+          sameAsLoser.push(`${tr.querySelector(".ml")?.textContent.trim()}: ${styleOf(win[0])}`);
+        }
+      }
+      return { rows: rows.length, rowsWithWin, winners, sameAsLoser,
+               manyWinners: rows.some((tr) =>
+                 [...tr.querySelectorAll(".cv.win")].length > 1) };
+    });
+    ok("there are comparison rows with a winner and a loser to compare",
+      w.rowsWithWin > 0, `${w.rows} metric rows, ${w.rowsWithWin} with a decided winner`);
+    ok("A WINNING CELL COMPUTES DIFFERENTLY FROM A LOSING ONE",
+      w.sameAsLoser.length === 0,
+      `identical styling in: ${w.sameAsLoser.join("; ")}`);
+    ok("...and no row crowns more than one winner",
+      w.manyWinners === false, "a metric row highlighted both cells");
+    await browser.close(); server.close();
+  }
+
+  console.log("\nPHASE 5 — THE CHIP MEASUREMENT PASS (G14)");
+  // The reason phase 4 deferred this rule: a padded badge adds width INSIDE
+  // the player-name cell on two pages that were already live and already
+  // measured, and app.css:176 plus constraint 5 record a name column
+  // collapsing to 59px with exactly that class of change. Measured on both
+  // pages that emit a chip, at the four widths where it could bite.
+  for (const hash of ["#/joop/lineup", "#/joop/wire"]) {
+    for (const w of [320, 360, 390, 560]) {
+      const { page, browser, server, errors } = await open({ width: w, height: 1000, hash });
+      const m = await page.evaluate(() => {
+        const doc = document.documentElement;
+        let worst = 1, worstName = "", narrowest = 9999;
+        for (const c of document.querySelectorAll("[data-content] .nm")) {
+          const tn = [...c.childNodes].find((n) => n.nodeType === 3 && n.textContent.trim());
+          if (!tn) continue;
+          const rr = document.createRange(); rr.selectNodeContents(tn);
+          const n = rr.getClientRects().length || 1;
+          if (n > worst) { worst = n; worstName = tn.textContent.trim(); }
+          narrowest = Math.min(narrowest, Math.round(c.getBoundingClientRect().width));
+        }
+        return { overflow: doc.scrollWidth - doc.clientWidth,
+                 worst, worstName,
+                 narrowest: narrowest === 9999 ? null : narrowest,
+                 chips: document.querySelectorAll("[data-content] .chip").length };
+      });
+      const cap = w <= 360 ? 2 : 1;
+      ok(`chip pass ${hash} ${w}px: the badge did not collapse the name column`,
+        m.narrowest === null || m.narrowest >= 110, `narrowest name cell ${m.narrowest}px`);
+      ok(`chip pass ${hash} ${w}px: and did not shred a long name`,
+        m.worst <= cap, `worst ${m.worst} lines, cap ${cap} ("${m.worstName}")`);
+      ok(`chip pass ${hash} ${w}px: and did not push the page sideways`,
+        m.overflow <= 1, `overflowing by ${m.overflow}px`);
+      ok(`chip pass ${hash} ${w}px: no page errors`, errors.length === 0, errors.join("\n       "));
+      await browser.close(); server.close();
+    }
   }
 
   console.log(`\nv2 render: ${pass} passed, ${fail} failed`);

@@ -26,8 +26,18 @@ container cannot reach anything, so:
 
    This README used to list the upstream names only, and the harness dies with
    a bare ENOENT on the first route it serves. Cost a session two round-trips.
-3. `npm i playwright` and `node harness.js` for the scenario sweep,
-   `node measure.js` for column-width measurement.
+3. `npm i playwright` and `node harness.js` for the old page's scenario sweep,
+   `node v2-render.js` for the v2 pages.
+
+`measure.js` was deleted in phase 5. It measured the OLD DOM (`section.block
+table`, `#app`) at four widths, and it hardcoded
+`executablePath:"/opt/pw-browsers/chromium"` - the exact path `harness.js`
+probes around because the versioned directory name changes with the container
+image, so it had almost certainly stopped launching. Everything it existed for
+now runs in `v2-render.js`, which measures the name cell at nine widths
+(320-1440, the 560-900 band included) by counting real line boxes rather than
+dividing a height. Recover it from git history if the old page ever needs
+measuring again.
 
 Sleeper and FantasyCalc are served from `fixture.js`; the CSVs are served as
 the REAL bytes. Only the transport is local — the join, the Eastern-to-UTC

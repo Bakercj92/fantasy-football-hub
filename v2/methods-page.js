@@ -150,9 +150,6 @@ export function methodsPage(L, state) {
           asked and the answer was noise.</li>
         <li><b>FAAB bid figures are deliberately absent, not missing.</b> Nothing free supports
           one.</li>
-        <li>Injury markers render as plain text rather than badges: this stylesheet has never
-          carried a rule for them. Cosmetic, and listed so it is not mistaken for a data
-          problem.</li>
       </ul>`),
 
     sec("sources", "Where the data comes from", `

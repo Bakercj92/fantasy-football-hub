@@ -279,6 +279,91 @@ function usagePayload({ throughWeek = 3, generatedAt = "2026-09-15T09:00:00Z", s
 }
 let RISER = null, TINY = null;
 
+// --- the graded recap ------------------------------------------------------
+//
+// PHASE 5. The graded Recap layout was the only route on the site with no
+// render coverage at all: `v2-render.js` met the empty state, because a fresh
+// browser has no decision log, and said so in a comment rather than hiding it.
+//
+// ADDITIVE AND OPT-IN, DELIBERATELY. Nothing here changes `usagePayload()` or
+// any other default, because 187 render checks and 25 node suites are measured
+// against those defaults and re-baselining them to reach one page would hide
+// far more than it proved. A scenario asks for this shape by name.
+//
+// WHY THERE ARE TWO INVENTED PLAYERS. The graded page has a THIRD verdict
+// state - the two lineups scored the SAME - and `heldUp` is `delta <= 0`, so a
+// tie is the case where the head and the body can disagree without either
+// being obviously wrong. (The phase 4 audit caught exactly that: "your lineup
+// held up" over a body correctly saying there was nothing in it.) No two
+// players in this fixture score identically in any mirrored week, and no
+// arithmetic on the existing actuals produces an exact zero, so the tie has to
+// be built. Both score 10.0 off DIFFERENT stat lines - ten catches against
+// four catches and a touchdown - so the league's own scoring genuinely runs
+// rather than two equal numbers being handed to it. Integer-only, because a
+// tie asserted through `rec_yd * 0.1` is a float-equality test wearing a
+// costume.
+const RECAP_TIE_L = "rc-tie-l", RECAP_TIE_R = "rc-tie-r";
+
+/** The mirror plus the two tie players. Keyed into `p` only - they are not
+ *  rostered, not projected and not on any depth chart, so nothing attaches
+ *  them and no other block can see them. `scoreWeek` reads `byId.get(id)
+ *  .actual[week]` and usage.js builds byId straight from `p`, which is the
+ *  whole reason this works without touching the projections universe. */
+function usageForRecap(opts = {}) {
+  const u = usagePayload(opts);
+  const row = (wk, off) => [wk, off, 0, 0, 0, null, null, null, 0, 0, 0, 0];
+  u.p[RECAP_TIE_L] = { pos: "WR", tm: "KC", w: [row(3, 0.5)], a: { "3": { rec: 10 } } };
+  u.p[RECAP_TIE_R] = { pos: "WR", tm: "KC", w: [row(3, 0.5)], a: { "3": { rec: 4, rec_td: 1 } } };
+  return u;
+}
+
+/** A seeded `ffh.decisions.v1`, covering every branch the graded layout has.
+ *
+ *  Scored at this fixture's SCORING (rec 1, rec_yd 0.1, rec_td 6) against the
+ *  week actuals in `usagePayload()`:
+ *
+ *    wk1 lineup   started Points Leader 14.1, suggested SamePosB 6.1
+ *                 -> delta -8.0, his own lineup held, `.tag.good`
+ *    wk2 lineup   started SamePosB 9.2 + an id the feed never priced,
+ *                 suggested Points Leader 25.2
+ *                 -> delta +16.0, the suggestion wins, plain `.tag`, and
+ *                    coverage 1-of-2 makes the row PARTIAL and excluded from
+ *                    the total - the real Tuesday-morning shape, where a
+ *                    Monday-night player is not mirrored yet
+ *    wk3 lineup   both sides 10.0 -> delta exactly 0, the third state,
+ *                 `.tag.unmeasured`
+ *    wk3 lockout  both sides 10.0 -> delta exactly 0, measured, NOT null:
+ *                 `netLocked` is then exactly 0, which is the surviving
+ *                 phase 4 mutation (`!r.netLocked` dropped the whole total
+ *                 while the footnote still promised two) and the common case
+ *                 in real use
+ *    wk1 lockout  entering is unmirrored, leaving scored -> delta null,
+ *                 `.tag.unmeasured` and an em dash
+ *
+ *  Needs `week: 4` on the scenario: `recap()` grades weeks strictly before
+ *  `currentWeek` and no later than `usage.throughWeek`, which is 3 here. One
+ *  row per week per kind, because both row kinds build their panel id from the
+ *  week (`rc-l-<week>`, `rc-k-<week>`) and two rows of one kind in one week
+ *  would emit a duplicate DOM id. */
+function recapLog({ leagueKey = "joop" } = {}) {
+  const L = (week, started, suggested) => ({
+    kind: "lineup", leagueKey, season: SEASON, week, at: 0,
+    started, suggested, threshold: 1.6,
+  });
+  const K = (week, entering, leaving) => ({
+    kind: "locked_out", leagueKey, season: SEASON, week, at: 0,
+    entering, leaving, cost: null,
+  });
+  const nm = (id, name) => ({ id, name, pos: "WR", team: "KC", pts: null, kickoffUTC: null });
+  return [
+    L(1, [H.wrPoints], [H.wrB]),
+    L(2, [H.wrB, H.noProjection], [H.wrPoints]),
+    L(3, [RECAP_TIE_L], [RECAP_TIE_R]),
+    K(3, [nm(RECAP_TIE_L, "Level Enter")], [nm(RECAP_TIE_R, "Level Leave")]),
+    K(1, [nm(H.noProjection, "Never Priced")], [nm(H.wrPoints, "Points Leader")]),
+  ];
+}
+
 // --- the vacancy layer ------------------------------------------------------
 //
 // HOSTILE, like everything else here. Chris's real week would light up one
@@ -456,4 +541,5 @@ function vacancyDisagree() {
 module.exports = { SEASON, WEEK, H, universe, LEAGUES, rostersFor, fcalc,
                    seasonWeeks, starters14, starters8, startersChop, myPlayers,
                    usagePayload, vacancyPayload, vacancyEmpty, vacancyDisagree,
+                   usageForRecap, recapLog, RECAP_TIE_L, RECAP_TIE_R,
                    riser: () => RISER, tiny: () => TINY };

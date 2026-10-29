@@ -11,7 +11,10 @@
 //   node test/render/setup.mjs      # stage site/ from THIS repo, fetch up/
 //   node test/render/harness.js     # the scenario sweep (the old page)
 //   node test/render/v2-render.js   # the v2 shell
-//   node test/render/measure.js     # column widths
+//
+// `measure.js` was deleted in phase 5: it measured the OLD DOM at four widths
+// and hardcoded a Chromium path that stopped existing. v2-render.js measures
+// nine widths (320-1440) with a real line-box count.
 //
 // Needs a container with network and `npm i playwright`. The device's own
 // shell cannot reach api.sleeper.com and Chromium in the container cannot

@@ -37,6 +37,14 @@
   --c-ok:#4ADE80;
   --c-warn:#FB923C;
   --c-bad:#F87171;
+  /* Fills for the warn and bad pairs. Added in phase 5 for the injury chip,
+     whose rule had to be re-expressed in tokens on the way over from the root
+     sheet. The VALUES are the literals `.tag.must` and `.tag.warn` already
+     carry verbatim, so nothing already measured moves a pixel; those two rules
+     are left pointing at their own copies deliberately, because collapsing
+     them is a refactor and this is a port. */
+  --c-warn-fill:#3A2411;
+  --c-bad-fill:#3A1515;
 
   /* --- type ---------------------------------------------------------------
      Unchanged ratios from the original, plus one step up for page titles,
@@ -200,6 +208,34 @@ tr.dead .nm,tr.dead .pt{color:var(--c-dim)}
 .bye{color:var(--c-warn)}
 .lock{margin-left:var(--sp1)}
 .kick{margin-left:var(--sp2);font-size:var(--s1);color:var(--c-dim);white-space:nowrap}
+
+/* Injury designations, which render inside the name cell (a severity flag,
+   lineup-page.js:270) and inside the projection cell (the status itself,
+   lineup-page.js:278, via copy.js injChip).
+
+   A PORT REGRESSION, NOT A PERMANENT PROPERTY. The live hub styles these at
+   app.css:82-86; the phase-1 port dropped the rule, so every designation has
+   been rendering as bare text on two shipped pages - and the Methods page
+   described that as a stylesheet that "has never carried a rule for them",
+   which turned a regression into documentation.
+
+   RE-EXPRESSED, NOT COPIED. The root rule carries bare hex plus var(--warn)
+   and var(--bad), neither of which exists in this file. A verbatim port would
+   have painted two of the three tiers with an unresolved custom property -
+   which renders transparent rather than broken, and is exactly the failure
+   the new unresolved-variable render check guards.
+
+   THREE TIERS, WITH Q DEMOTED ON PURPOSE. The root sheet painted Questionable
+   amber; amber here is --c-act, the answer colour, which rule 3 reserves and
+   forbids to anything decorative. Questionable is the least informative
+   designation on the list, so it falls through to the base rule (mute on
+   raised) and the two that actually settle a lineup keep warn and bad. */
+.chip{display:inline-block;margin-left:var(--sp1);padding:1px var(--sp2);
+  border-radius:var(--r-pill);font-size:var(--s1);font-weight:700;
+  letter-spacing:.03em;vertical-align:middle;
+  background:var(--c-raised);color:var(--c-mute)}
+.chip.dbt{background:var(--c-warn-fill);color:var(--c-warn)}
+.chip.out,.chip.ir,.chip.pup,.chip.sus,.chip.cov{background:var(--c-bad-fill);color:var(--c-bad)}
 
 /* Hybrid tables, phase 3: name + projection always visible, the rest folds.
    The fold classes are defined here so the breakpoints live in one place.
@@ -396,14 +432,17 @@ a:focus-visible,button:focus-visible,summary:focus-visible,details:focus-visible
 /* ===========================================================================
    PHASE 4 — Compare, and the chip that keeps a selection findable.
 
-   NOT TOUCHED HERE, DELIBERATELY: `.chip`. Phase 3 emits class="chip out|dbt|q"
-   from lineup-page.js, wire-page.js and copy.js and this stylesheet has never
-   carried a rule for it, so injury markers render as bare text today. Giving
-   them a padded badge is the right fix and it is NOT a phase 4 change: it adds
-   width inside the player-name cell on two pages that are already live and
-   already measured, and app.css:176 plus constraint 5 of the rebuild record a
-   name column collapsing to 59px with that class of change. It needs its own
-   pass and its own measurement.
+   DEFERRED HERE, DONE IN PHASE 5: `.chip`. Phase 3 emits class="chip out|dbt|q"
+   from lineup-page.js, wire-page.js and copy.js and this stylesheet carried no
+   rule for it, so injury markers rendered as bare text on two shipped pages.
+   The reason for deferring stands on its own terms - a padded badge adds width
+   inside the player-name cell on pages already live and already measured, and
+   app.css:176 plus constraint 5 of the rebuild record a name column collapsing
+   to 59px with exactly that class of change - but the gap itself was a PORT
+   REGRESSION, not a property of this design, and phase 4's Methods copy
+   described it as the latter. The rule now lives beside the name-cell styling
+   it affects, re-expressed in tokens, with its own measurement pass at
+   320/360/390/560 in test/render/v2-render.js.
    =========================================================================== */
 
 /* --- the selection chip, in the inert chrome ----------------------------- */
@@ -455,8 +494,9 @@ a:focus-visible,button:focus-visible,summary:focus-visible,details:focus-visible
    same specificity as the rule at the top of this file and therefore silently
    flipped align-items from baseline to center on every card heading on Lineup,
    Wire and Today - three pages already shipped and already measured. Exactly
-   the regression class that justified leaving `.chip` alone, committed two
-   pages wider and undeclared. Caught in audit. */
+   the regression class that justified deferring `.chip`, committed two pages
+   wider and undeclared. Caught in audit. (`.chip` has since had the pass and
+   the measurement it was deferred for; this rule stays scoped regardless.) */
 .cmp > h2,.cmp.one > h2{display:flex;align-items:center;gap:var(--sp2)}
 
 .verdict{font-size:var(--s4);font-weight:650;line-height:var(--lh-tight);

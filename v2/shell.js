@@ -178,6 +178,17 @@ export function setRoute(route, { day } = {}) {
     b.setAttribute("aria-current", String(b.dataset.league === route.league));
     // Switching league keeps the page you are on, rather than dumping you back
     // to a fixed one.
+    //
+    // THE `: "lineup"` BRANCH IS UNREACHABLE TODAY, AND IS KEPT ON PURPOSE.
+    // It can only be taken when r.scope !== "league", and four lines below
+    // that same condition sets `el.leagues.hidden`, so on a global route these
+    // hrefs exist on a picker nobody can see or tab into. Phase 5 considered
+    // deleting it and did not: the two facts are five lines apart and only one
+    // of them is enforced, so the day the picker stays visible on a global
+    // route - a cross-league Compare, say - a deleted fallback sends every
+    // league button to `#/<league>/undefined` silently, while this one sends
+    // them somewhere real. The guard is the `hidden` line, not this ternary;
+    // if that line goes, re-check this.
     b.setAttribute("href", href(r.scope === "league" ? route.page : "lineup", b.dataset.league));
   });
   el.leagues.hidden = r.scope !== "league";
