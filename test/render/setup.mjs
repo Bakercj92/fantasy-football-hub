@@ -38,7 +38,7 @@ const UPSTREAM = {
   "ids.csv": "https://raw.githubusercontent.com/dynastyprocess/data/master/files/db_playerids.csv",
 };
 
-const copy = ["index.html", "app.css", "leagues.json", "js", "v2"];
+const copy = ["index.html", "legacy.html", "app.css", "leagues.json", "js", "v2"];
 
 await rm(SITE, { recursive: true, force: true });
 await mkdir(SITE, { recursive: true });

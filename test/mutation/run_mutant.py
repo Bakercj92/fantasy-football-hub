@@ -52,7 +52,7 @@ R = os.path.join(wd, "test/render")
 # Re-stage site/ from the MUTATED tree, then prove the mutation is what gets served.
 subprocess.run(["node", "test/render/setup.mjs"], cwd=wd, capture_output=True, check=True)
 for e in edits:
-    if e["file"].startswith(("v2/", "js/")) or e["file"] in ("index.html", "app.css", "leagues.json"):
+    if e["file"].startswith(("v2/", "js/")) or e["file"] in ("index.html", "legacy.html", "app.css", "leagues.json"):
         served = os.path.join(R, "site", e["file"])
         if md5(served) != md5(os.path.join(wd, e["file"])):
             finish("APPLY-FAIL", f'served copy of {e["file"]} is not the mutated file')

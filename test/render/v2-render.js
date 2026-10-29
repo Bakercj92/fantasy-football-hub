@@ -23,10 +23,19 @@ const MIME = { ".html":"text/html", ".css":"text/css", ".js":"text/javascript", 
 const json = (route, body) => route.fulfill({ status:200, contentType:"application/json", body: JSON.stringify(body) });
 const SIM = Date.UTC(2026, 8, 13, 17, 40, 0); // Sunday 13:40 ET
 
-function serve() {
+// PHASE 6 - THE PAGES SUBPATH. GitHub Pages serves this repo under
+// /fantasy-football-hub/, never at an origin root. Served at "/", a page that
+// resolves its data against "../" lands on "/" - the right answer locally and
+// the wrong one live - so every swap check passes `prefix` and the server
+// refuses anything outside it, the way Pages does.
+function serve(prefix = "") {
   return new Promise((res) => {
     const s = http.createServer((req, rq) => {
       let p = decodeURIComponent(req.url.split("?")[0]);
+      if (prefix) {
+        if (!p.startsWith(prefix + "/")) { rq.writeHead(404); return rq.end("outside the site"); }
+        p = p.slice(prefix.length);
+      }
       if (p.endsWith("/")) p += "index.html";
       const f = path.join(SITE, p);
       fs.readFile(f, (e, b) => e
@@ -66,8 +75,8 @@ async function open({ width, height, hash = "", usageOk = true, vacancyOk = true
                       week = null, displayWeek = null, seedLog = null,
                       usage = null, vacancy = null, upstreamUpdatedAt = null,
                       defPts = null, trendingOk = true, noFaab = false,
-                      waiverDay = null, fcalcOk = true }) {
-  const server = await serve();
+                      waiverDay = null, fcalcOk = true, prefix = "", pagePath = "v2/" }) {
+  const server = await serve(prefix);
   const port = server.address().port;
   const exe = chromePath();
   const browser = await chromium.launch(exe ? { executablePath: exe } : {});
@@ -198,7 +207,7 @@ async function open({ width, height, hash = "", usageOk = true, vacancyOk = true
     return route.fulfill({ status: 200, contentType: "text/csv", body: fs.readFileSync(path.join(UP, file)) });
   });
 
-  await page.goto(`http://127.0.0.1:${port}/v2/${hash}`, { waitUntil: "networkidle" });
+  await page.goto(`http://127.0.0.1:${port}${prefix}/${pagePath}${hash}`, { waitUntil: "networkidle" });
   await page.waitForTimeout(settle);
   return { page, browser, server, errors, dataHits };
 }
@@ -2160,6 +2169,50 @@ const ok = (name, cond, detail = "") => {
       ok("G16: no page errors across the tick", errors.length === 0, errors.join("\n       "));
       await browser.close(); server.close();
     }
+  }
+
+  // ---- PHASE 6: THE SWAP ---------------------------------------------------
+  // The old hub stays live for two weeks at legacy.html in the repo root - not
+  // a legacy/ folder, because js/app.js fetches ./leagues.json and its loaders
+  // fetch ./data/ document-relative, and from a folder those 404 into the
+  // silent degraded mode (constraint 1). app.js is frozen, so the page has to
+  // live where its fetches already resolve.
+  //
+  // THE CHECKS ARE ON REQUEST PATHS. The usage and vacancy intercepts above
+  // match any prefix, so "the layer arrived" passes even when the page asked
+  // the wrong folder. Only the path the browser actually requested can fail.
+  const PAGES = "/fantasy-football-hub";
+  console.log("\nPHASE 6 — LEGACY AT ITS ADDRESS");
+  {
+    const { page, browser, server, errors, dataHits } =
+      await open({ width: 1280, height: 900, prefix: PAGES, pagePath: "legacy.html", settle: 1500 });
+    const paths = dataHits.map((u) => new URL(u).pathname);
+    const d = `requested: ${paths.join(", ")}`;
+    ok("LEGACY: no page errors", errors.length === 0, errors.join("\n       "));
+    ok("LEGACY: leagues.json came from the site root",
+      paths.includes(`${PAGES}/leagues.json`), d);
+    ok("LEGACY: the usage mirror came from the site root",
+      paths.some((p) => new RegExp(`^${PAGES}/data/usage_\\d+\\.json$`).test(p)), d);
+    ok("LEGACY: the vacancy layer came from the site root",
+      paths.some((p) => new RegExp(`^${PAGES}/data/vacancy_\\d+\\.json$`).test(p)), d);
+    ok("LEGACY: nothing was requested outside the site or from a legacy/ folder",
+      paths.length > 0 && paths.every((p) => p.startsWith(PAGES + "/") && !p.includes("/legacy/")), d);
+    const view = await page.evaluate(() => ({
+      sections: document.querySelectorAll("#app > section").length,
+      usage: /Usage through week/.test(document.querySelector("footer")?.textContent || ""),
+      noUsage: /No usage layer this load/.test(document.body.textContent),
+      sheets: [...document.querySelectorAll('link[rel="stylesheet"]')].map((l) => new URL(l.href).pathname),
+      sheetRules: [...document.styleSheets].reduce((n, s) => { try { return n + s.cssRules.length; } catch { return n; } }, 0),
+      v2Shell: !!document.querySelector(".topbar, #root"),
+      title: document.title,
+    }));
+    const v = JSON.stringify(view);
+    ok("LEGACY: the old page actually painted its sections", view.sections >= 5, v);
+    ok("LEGACY: the usage footer reports the mirror, not the degraded line", view.usage && !view.noUsage, v);
+    ok("LEGACY: it is styled by the ROOT app.css, and that sheet loaded",
+      view.sheets.length === 1 && view.sheets[0] === `${PAGES}/app.css` && view.sheetRules > 50, v);
+    ok("LEGACY: it is the old page, not the v2 shell", !view.v2Shell && /legacy/i.test(view.title), v);
+    await browser.close(); server.close();
   }
 
   console.log(`\nv2 render: ${pass} passed, ${fail} failed`);

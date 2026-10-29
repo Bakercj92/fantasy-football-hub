@@ -165,7 +165,9 @@ async function run({ label, width, height, fcalcOk = true, scheduleOk = true, se
     return route.fulfill({ status:200, contentType:"text/csv", body: fs.readFileSync(path.join(UP, file)) });
   });
 
-  await page.goto(`http://127.0.0.1:${port}/`, { waitUntil: "networkidle" });
+  // PHASE 6: the old page lives at legacy.html once the root is v2. This sweep
+  // keeps certifying it there for its two weeks.
+  await page.goto(`http://127.0.0.1:${port}/legacy.html`, { waitUntil: "networkidle" });
   if (league) { await page.click(`.tab[data-k="${league}"]`); await page.waitForTimeout(150); }
   for (const id of select) {
     await page.click(`[data-sel="${id}"]`);

@@ -67,3 +67,16 @@ Keep the deliberate failure paths. The `fcalcOk:false` and `scheduleOk:false`
 scenarios exist because a Phase 3a accident — a run with the schedule
 unreachable — revealed the footer still announcing "Kickoff locking is on"
 when nothing could lock. That accident is now a permanent scenario.
+
+## The swap (phase 6): the subpath, and legacy.html
+
+GitHub Pages serves this repo under `/fantasy-football-hub/`, never at an origin root. A page that
+resolves its data one folder too high lands on `/` here and on the wrong place live, so the swap
+checks pass `open({ prefix: "/fantasy-football-hub", pagePath: ... })` and the test server refuses
+anything outside the prefix. **Assert on request paths (`dataHits`), not on "the layer arrived"**:
+the usage and vacancy intercepts match any prefix and will serve the fixture to a page that asked
+the wrong folder (mutants `P6-L2`, `P6-L3`).
+
+The old hub lives at `legacy.html` in the repo root for two weeks after the swap — not a `legacy/`
+folder, because `js/app.js` fetches document-relative and is frozen. `harness.js` now loads
+`/legacy.html`; its JSON output was byte-identical to the `/` run on 2026-10-29.

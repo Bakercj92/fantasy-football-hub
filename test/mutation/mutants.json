@@ -468,5 +468,58 @@
   "old": "      attachUsage();\n      for (const e of state.cfg.leagues) attachFcalcFor(e.key);\n      attachRos();",
   "new": "      attachUsage();\n      attachRos();",
   "sections": "KICKOFF RE-SOLVE"
+ },
+ {
+  "id": "base-legacy-address",
+  "baseline": true,
+  "sections": "LEGACY AT ITS ADDRESS"
+ },
+ {
+  "id": "P6-L1-legacy-leagues-up-a-folder",
+  "file": "js/app.js",
+  "old": "fetch(\"./leagues.json\")",
+  "new": "fetch(\"../leagues.json\")",
+  "sections": "LEGACY AT ITS ADDRESS",
+  "note": "legacy resolves leagues.json one folder up: right at an origin root, wrong on Pages - dies only because the check serves under the subpath"
+ },
+ {
+  "id": "P6-L2-legacy-usage-wrong-folder",
+  "file": "js/usage.js",
+  "old": "fetchImpl(`./data/usage_${season}.json`",
+  "new": "fetchImpl(`../data/usage_${season}.json`",
+  "sections": "LEGACY AT ITS ADDRESS",
+  "note": "the intercept still serves the fixture, so the page looks perfect; only the request-path check can see it"
+ },
+ {
+  "id": "P6-L3-legacy-vacancy-wrong-folder",
+  "file": "js/vacancy.js",
+  "old": "fetchImpl(`./data/vacancy_${season}.json`",
+  "new": "fetchImpl(`../data/vacancy_${season}.json`",
+  "sections": "LEGACY AT ITS ADDRESS",
+  "note": "same blind spot as L2, other loader"
+ },
+ {
+  "id": "P6-L4-legacy-wrong-sheet",
+  "file": "legacy.html",
+  "old": "href=\"./app.css\"",
+  "new": "href=\"./v2/app.css\"",
+  "sections": "LEGACY AT ITS ADDRESS",
+  "note": "legacy styled by the v2 sheet"
+ },
+ {
+  "id": "P6-L5-legacy-untitled",
+  "file": "legacy.html",
+  "old": "Fantasy Football Hub \u2014 legacy",
+  "new": "Fantasy Football Hub",
+  "sections": "LEGACY AT ITS ADDRESS",
+  "note": "legacy indistinguishable from the root in the tab"
+ },
+ {
+  "id": "P6-L6-prefix-knob-dead",
+  "file": "test/render/v2-render.js",
+  "old": "const server = await serve(prefix);",
+  "new": "const server = await serve();",
+  "sections": "LEGACY AT ITS ADDRESS",
+  "note": "server stops enforcing the subpath; the page is then 404 at its own address"
  }
 ]
